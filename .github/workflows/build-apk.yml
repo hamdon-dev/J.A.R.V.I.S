@@ -2,7 +2,7 @@ name: Build APK
 
 on:
   push:
-    branches: [ main ]
+    branches: [main, master]
   workflow_dispatch:
 
 jobs:
@@ -16,21 +16,26 @@ jobs:
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '17'
+          distribution: temurin
+          java-version: "17"
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: 'stable'
+          channel: stable
+          cache: true
 
-      # The android/ folder isn't in the repo. Flutter generates it here, so
-      # you never have to create it by hand on a phone.
       - name: Protect our own files
         run: |
           mkdir -p .keep
           cp pubspec.yaml .keep/pubspec.yaml
-          cp lib/main.dart .keep/main.dart
+          mkdir -p lib
+          if [ -f lib/main.dart ]; then
+            cp lib/main.dart .keep/main.dart
+          else
+            echo "ERROR: lib/main.dart missing" >&2
+            exit 1
+          fi
 
       - name: Generate Android scaffold
         run: |
@@ -46,7 +51,7 @@ jobs:
           cp .keep/main.dart lib/main.dart
           rm -rf .keep
 
-      - name: Patch manifest and minSdk
+      - name: Patch manifest, minSdk, FragmentActivity
         run: python3 tool/patch_android.py
 
       - name: Install dependencies
