@@ -28,6 +28,9 @@ const String kEmailUserKey = 'email_user';
 const String kEmailPassKey = 'email_app_password';
 const String kRestartWebhookKey = 'fivem_restart_webhook';
 const String kBraveApiKeyKey = 'brave_api_key';
+const String kGithubTokenKey = 'github_token';
+const String kGithubRepoKey = 'github_repo';
+const String kPrefGithubRepo = 'pref_github_repo';
 
 const String kChatEndpoint = 'https://api.openai.com/v1/chat/completions';
 const String kSpeechEndpoint = 'https://api.openai.com/v1/audio/speech';
