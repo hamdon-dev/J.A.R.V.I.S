@@ -1,0 +1,31 @@
+name: jarvis
+description: J.A.R.V.I.S. — Iron Man style personal AI assistant
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  speech_to_text: ^7.0.0
+  flutter_tts: ^4.2.0
+  http: ^1.2.2
+  permission_handler: ^11.3.1
+  flutter_secure_storage: ^9.2.2
+  shared_preferences: ^2.3.2
+  audioplayers: ^6.1.0
+  android_intent_plus: ^5.1.0
+  notification_listener_service: ^0.3.4
+  flutter_foreground_task: ^8.10.0
+  local_auth: ^2.3.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
