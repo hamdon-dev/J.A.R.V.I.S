@@ -168,7 +168,7 @@ class JarvisTaskHandler extends TaskHandler {
       final count = players.length;
 
       await FlutterForegroundTask.updateService(
-        notificationTitle: online ? 'JARVIS â€¢ LDRP Online' : 'JARVIS â€¢ LDRP OFFLINE',
+        notificationTitle: online ? 'JARVIS · LDRP Online' : 'JARVIS · LDRP OFFLINE',
         notificationText: online
             ? '$count player${count == 1 ? '' : 's'} online'
             : 'Server unreachable',
@@ -1274,7 +1274,7 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
   Future<void> _startForegroundService() async {
     final result = await FlutterForegroundTask.startService(
       serviceId: 256,
-      notificationTitle: 'JARVIS â€¢ Watching LDRP',
+      notificationTitle: 'JARVIS · Watching LDRP',
       notificationText: 'Monitor active',
       callback: startJarvisCallback,
     );
@@ -2040,7 +2040,7 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
             'android.intent.extra.alarm.HOUR': hour,
             'android.intent.extra.alarm.MINUTES': minute,
             'android.intent.extra.alarm.MESSAGE':
-                (args['label'] ?? 'JARVIS').toString(),
+                (args['label'] ?? 'J.A.R.V.I.S').toString(),
             'android.intent.extra.alarm.SKIP_UI': true,
           }).launch();
           return jsonEncode({'ok': true});
@@ -2054,7 +2054,7 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
           await AndroidIntent(action: 'android.intent.action.SET_TIMER', arguments: {
             'android.intent.extra.alarm.LENGTH': seconds,
             'android.intent.extra.alarm.MESSAGE':
-                (args['label'] ?? 'JARVIS').toString(),
+                (args['label'] ?? 'J.A.R.V.I.S').toString(),
             'android.intent.extra.alarm.SKIP_UI': true,
           }).launch();
           return jsonEncode({'ok': true});
@@ -2582,7 +2582,7 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
     } on TimeoutException {
       if (_retryCount < 1) {
         _retryCount++;
-        _note('Retryingâ€¦');
+        _note('Retrying…');
         _addLog('system', 'Request timed out. Retrying once.');
         await Future.delayed(const Duration(milliseconds: 600));
         await _runChatWithRetry(key);
@@ -2593,7 +2593,7 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
     } catch (_) {
       if (_retryCount < 1) {
         _retryCount++;
-        _note('Retryingâ€¦');
+        _note('Retrying…');
         _addLog('system', 'Network error. Retrying once.');
         await Future.delayed(const Duration(milliseconds: 700));
         await _runChatWithRetry(key);
@@ -3403,7 +3403,7 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
                               enabled: !busy,
                               style: const TextStyle(color: Colors.white, fontSize: 14),
                               decoration: InputDecoration(
-                                hintText: 'Type a commandâ€¦',
+                                hintText: 'Type a command…',
                                 hintStyle: TextStyle(
                                   color: Colors.white.withOpacity(0.2),
                                   fontSize: 13.5,
@@ -3497,7 +3497,7 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
                     Text(
                       busy
                           ? 'TAP TO INTERRUPT'
-                          : 'TAP TO SPEAK  â€¢  HOLD FOR HANDS-FREE',
+                          : 'TAP TO SPEAK  ·  HOLD FOR HANDS-FREE',
                       style: TextStyle(
                         color: Colors.white.withOpacity(0.24),
                         fontSize: 9,
@@ -3962,7 +3962,7 @@ class _SettingsScreenState extends State<_SettingsScreen> {
                 obscureText: true,
                 style: const TextStyle(color: Colors.white),
                 decoration: InputDecoration(
-                  hintText: 'BSAâ€¦',
+                  hintText: 'BSA…',
                   labelText: 'Brave Search API Key',
                   labelStyle: TextStyle(color: Colors.white.withOpacity(0.42)),
                   border: InputBorder.none,
@@ -4097,7 +4097,7 @@ class _SettingsScreenState extends State<_SettingsScreen> {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(14, 12, 14, 0),
                   child: Text(
-                    'POLL INTERVAL  â€¢  $_fivemPollSeconds s',
+                    'POLL INTERVAL  ·  $_fivemPollSeconds s',
                     style: TextStyle(
                       color: Colors.white.withOpacity(0.5),
                       fontSize: 11.5,
@@ -4202,7 +4202,7 @@ class _SettingsScreenState extends State<_SettingsScreen> {
           ...widget.memory.map(
             (f) => Padding(
               padding: const EdgeInsets.only(left: 6, bottom: 5),
-              child: Text('â€¢  $f',
+              child: Text('·  $f',
                   style:
                       TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 12.5)),
             ),
@@ -4233,7 +4233,7 @@ class _SettingsScreenState extends State<_SettingsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'â€¢  ${t['name']}  Â·  used ${t['use_count'] ?? 0}Ã—',
+                    '·  ${t['name']}  Â·  used ${t['use_count'] ?? 0}Ã—',
                     style: TextStyle(
                         color: Colors.white.withOpacity(0.65), fontSize: 12.5),
                   ),
@@ -4395,7 +4395,7 @@ class _ApiKeyScreenState extends State<_ApiKeyScreen>
                   obscureText: true,
                   style: const TextStyle(color: Colors.white, letterSpacing: 0.8),
                   decoration: InputDecoration(
-                    hintText: 'sk-â€¦',
+                    hintText: 'sk-…',
                     hintStyle: TextStyle(color: Colors.white.withOpacity(0.22)),
                     errorText: _error,
                     errorStyle: const TextStyle(color: kJarvisRed, fontSize: 12),
@@ -4420,7 +4420,7 @@ class _ApiKeyScreenState extends State<_ApiKeyScreen>
                     ],
                   ),
                   child: Text(
-                    _saving ? 'INITIALISINGâ€¦' : 'AUTHENTICATE & CONTINUE',
+                    _saving ? 'INITIALISING…' : 'AUTHENTICATE & CONTINUE',
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       color: kJarvisCyan,
