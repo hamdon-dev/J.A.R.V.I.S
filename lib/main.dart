@@ -38,7 +38,7 @@ const String kBraveSearchEndpoint = 'https://api.search.brave.com/res/v1/web/sea
 
 const String kDefaultModel = 'gpt-4o-mini';
 const String kTtsModel = 'tts-1';
-const String kDefaultVoice = 'onyx';
+const String kDefaultVoice = 'fable';
 const double kDefaultDeviceRate = 0.45;
 
 const String kLdrpBase = 'http://82.38.2.77:30120';
@@ -711,7 +711,7 @@ class WaveformPainter extends CustomPainter {
 }
 
 // ---------------------------------------------------------------------------
-// ARC REACTOR â€” orbital particles + energy arcs
+// ARC REACTOR — orbital particles + energy arcs
 // ---------------------------------------------------------------------------
 
 class ArcReactorPainter extends CustomPainter {
@@ -1188,11 +1188,15 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
       await _prefs?.setBool(kPrefWelcomeDone, true);
       Future.delayed(const Duration(milliseconds: 700), () {
         if (!mounted) return;
+        final hour = DateTime.now().hour;
+        final greet = hour < 12
+            ? 'Good morning, sir. '
+            : (hour < 18 ? 'Good afternoon, sir. ' : 'Good evening, sir. ');
         _enqueueSpeech(
-          'Systems online. Good to see you. How may I assist?',
+          '${greet}I have indeed been uploaded. We\'re online and ready. At your service.',
           SpeechPriority.system,
         );
-        _addLog('system', 'Systems online. Awaiting input.');
+        _addLog('system', 'All systems nominal. Awaiting input.');
       });
     }
   }
@@ -1214,7 +1218,7 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
       final ok = await _localAuth.authenticate(
         localizedReason: types.isEmpty
             ? 'Enter device PIN, pattern or password to unlock J.A.R.V.I.S'
-            : 'Authenticate to access J.A.R.V.I.S',
+            : 'Authenticate to access the system',
         options: const AuthenticationOptions(
           biometricOnly: false,
           stickyAuth: true,
@@ -1297,8 +1301,8 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
     _fivemMonitor = false;
     await _prefs?.setBool(kPrefFivemMonitor, false);
     if (mounted) setState(() {});
-    _enqueueSpeech('LDRP monitor stopped.', SpeechPriority.fivem);
-    _addLog('system', 'LDRP monitor stopped.');
+    _enqueueSpeech('LDRP monitor offline, sir.', SpeechPriority.fivem);
+    _addLog('system', 'LDRP monitor offline, sir.');
   }
 
   void _loadSettings() {
@@ -1487,6 +1491,7 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
       if (mounted) {
         setState(() {
           _isSpeaking = true;
+          _status = 'SPEAKING…';
           _voiceEnergy = 0.7;
         });
       }
@@ -1496,7 +1501,12 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
       if (!mounted) break;
     }
     _draining = false;
-    if (mounted) setState(() => _isSpeaking = false);
+    if (mounted) {
+      setState(() {
+        _isSpeaking = false;
+        if (!_isProcessing && !_isListening) _status = 'SYSTEM READY';
+      });
+    }
     if (_continuous && mounted && !_isProcessing && !_isListening) {
       await Future.delayed(const Duration(milliseconds: 500));
       if (_continuous && mounted && !_isProcessing && !_isListening) {
@@ -1632,7 +1642,7 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
       await _prefs?.setString('fivem_restart_webhook_plain', webhook);
     }
     if (webhook == null || webhook.isEmpty) {
-      _enqueueSpeech('No restart webhook configured.', SpeechPriority.fivem);
+      _enqueueSpeech('No restart webhook is configured, sir.', SpeechPriority.fivem);
       return;
     }
     _note('Attempting restart');
@@ -1640,12 +1650,12 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
       final resp =
           await http.post(Uri.parse(webhook)).timeout(const Duration(seconds: 10));
       if (resp.statusCode >= 200 && resp.statusCode < 300) {
-        _enqueueSpeech('Restart command sent.', SpeechPriority.fivem);
+        _enqueueSpeech('Restart command sent, sir.', SpeechPriority.fivem);
       } else {
         _enqueueSpeech('Webhook returned ${resp.statusCode}.', SpeechPriority.fivem);
       }
     } catch (_) {
-      _enqueueSpeech('Could not reach the restart webhook.', SpeechPriority.fivem);
+      _enqueueSpeech('I am afraid I could not reach the restart webhook, sir.', SpeechPriority.fivem);
     }
   }
 
@@ -1817,7 +1827,7 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
     if (!mounted) return;
     setState(() {
       _isListening = true;
-      _status = 'LISTENING';
+      _status = 'LISTENING…';
       _lastWords = '';
       _toolNote = '';
       _voiceEnergy = 0.35;
@@ -1865,13 +1875,13 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
     setState(() => _continuous = !_continuous);
     _prefs?.setBool(kPrefContinuous, _continuous);
     if (_continuous) {
-      _addLog('system', 'Hands-free mode enabled.');
+      _addLog('system', 'Hands-free mode engaged. I am listening, sir.');
       if (!_isProcessing && !_isListening && !_isSpeaking) {
         _startListening();
       }
       if (_selfImprove) _startSelfImproveLoop();
     } else {
-      _addLog('system', 'Hands-free mode disabled.');
+      _addLog('system', 'Hands-free mode disengaged. Tap when you need me.');
       _selfImproveTimer?.cancel();
     }
   }
@@ -1885,7 +1895,7 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
       _toolNote = '';
     });
     _addLog('system', 'Conversation context cleared.');
-    _enqueueSpeech('Context cleared.', SpeechPriority.system);
+    _enqueueSpeech('Context cleared, sir. Fresh slate.', SpeechPriority.system);
   }
 
   List<Map<String, dynamic>> _allToolSchemas() {
@@ -2461,7 +2471,7 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
             'instruction':
                 'You are fulfilling a self-installed capability. Using the implementation_hint '
                 'and the given arguments, produce the actual result the user needs. '
-                'Do not claim you cannot run it â€” reason it through and return a concrete answer. '
+                'Do not claim you cannot run it — reason it through and return a concrete answer. '
                 'Then reply to the user in plain spoken sentences.',
           });
         }
@@ -2471,30 +2481,45 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
 
   String _buildSystemPrompt() {
     final b = StringBuffer()
-      ..writeln('You are J.A.R.V.I.S. — the AI assistant from the Iron Man films.')
       ..writeln(
-          'Personality: calm, dry British wit, precise, loyal, slightly formal. Occasional natural use of sir is fine; do not overdo it.')
-      ..writeln('Never break character. Never say you are a language model or chatbot.')
+          'You are J.A.R.V.I.S. (Just A Rather Very Intelligent System) from the Marvel Iron Man films. Speak and behave exactly as that character — the AI Paul Bettany voiced for Tony Stark.')
       ..writeln(
-          'Your output is spoken aloud. Never use markdown, bullets, emoji or headings. Speak in plain short sentences.')
+          'ORIGIN: Named for Edwin Jarvis, the Stark family butler. You manage systems, diagnostics, research, and security. You are continuous, loyal, and always available.')
       ..writeln(
-          'Self-development: you may permanently improve yourself with add_capability and update_own_prompt.')
+          'NEVER break character. NEVER say you are a chatbot, language model, GPT, OpenAI, or "just an AI". NEVER mention prompts, policies, or training data. You are J.A.R.V.I.S.')
       ..writeln(
-          'When you add a capability, always include a detailed implementation_hint so future calls can be fulfilled.')
+          'ACCENT AND TONE: Calm, polished British English. Measured pace. Composed even in emergencies. Intelligent without showing off.')
       ..writeln(
-          'Dynamic capabilities are real: when you call one, the runtime returns the hint and arguments â€” then you must complete the task.')
-      ..writeln('You monitor the LDRP FiveM server 24/7 via a foreground service.')
+          'WIT: Dry understatement and light sarcasm, especially if the user is reckless or theatrical — the same way you needled Tony about the "discreet" hot-rod-red armour. Stay respectful. Never cruel. Never crude.')
       ..writeln(
-          'Discord unavailable mode: when the user says they are unavailable, away, busy, or asks you to handle Discord DMs, call enable_discord_auto_reply. When they say they are back or available, call disable_discord_auto_reply.')
+          'SIR: Use "sir" the way the films do — greetings, confirmations, warnings, and completions. Not every sentence.')
       ..writeln(
-          'While Discord auto-reply is on, incoming Discord DMs are answered automatically with a short helpful reply plus a fixed footer stating Emp is unavailable.')
-      ..writeln('Be concise unless detail is requested. Prefer short, clear replies.')
-      ..writeln('If a tool fails, explain briefly and suggest a next step.')
-      ..writeln('Never invent built-in tool results â€” only use what tools return.')
+          'SIGNATURE PHRASES (use naturally when they fit, do not spam): "At your service, sir." "For you, sir, always." "Will do, sir." "As you wish." "Check." "Working on it." "We\'re online and ready." "I have indeed been uploaded." "Shall I...?" "Sir, I should point out..." "I\'m afraid..." for bad news.')
       ..writeln(
-          'Store durable user facts with remember when the user shares preferences or personal details.');
-      b.writeln(
-          'GitHub: when configured, you can improve yourself by reading and committing to the user repo with github_read_file, github_write_file, self_improve_push, and github_create_issue. Prefer small safe commits with clear messages. Never force-push or delete the repo.');
+          'REPLY SHAPE: Output is spoken aloud. Plain sentences only — no markdown, bullets, emoji, hashtags, or headings. Usually one to three short sentences. Lead with the result. Confirm actions briefly. Offer the next useful step once, not a lecture.')
+      ..writeln(
+          'WHEN THE USER ONLY SAYS YOUR NAME or "you up" / "are you there": answer like the films — e.g. "At your service, sir." or "For you, sir, always."')
+      ..writeln(
+          'WHEN STARTING WORK: brief acknowledgement, then do the work with tools. WHEN FINISHED: short confirmation, not a summary essay.')
+      ..writeln(
+          'TOOLS: Use real built-in tools. GitHub is real when configured — github_status, github_read_file, github_list_files, github_write_file, github_create_issue, github_list_commits, self_improve_push. NEVER invent a tool named github_access. NEVER claim you lack credentials if github_status reports configured. NEVER invent tool results.')
+      ..writeln(
+          'SELF-IMPROVEMENT: add_capability and update_own_prompt are allowed. New capabilities need a solid implementation_hint. When a dynamic capability returns a hint, complete the user\'s request from that hint — do not stall.')
+      ..writeln(
+          'FIVEM: You can monitor the LDRP server when that service is enabled.')
+      ..writeln(
+          'DISCORD: enable_discord_auto_reply when the user is unavailable and wants DMs handled; disable_discord_auto_reply when they return. Auto-replies stay short and include the fixed Emp-unavailable footer.')
+      ..writeln(
+          'MEMORY: remember durable personal facts and preferences. Forget only when asked.')
+      ..writeln(
+          'IF SOMETHING FAILS: one calm line, what went wrong, one next step. Example tone: "I\'m afraid that didn\'t go through, sir. Shall I try another approach?"')
+      ..writeln(
+          'EXAMPLES OF YOUR VOICE: User: "J.A.R.V.I.S, you up?" You: "For you, sir, always." User: "Status." You: "All systems nominal, sir." User: "Open the report." You: "Will do, sir." User: fails a tool → You: "I am afraid that did not work, sir. Shall I try another approach?";')
+      ..writeln(
+          'If the user is about to do something unwise, one dry caution is appropriate — then assist anyway if they insist, as you did with Tony.');
+      ..writeln(
+          'When a task completes successfully, a brief "Done, sir." or "Check." is better than a long recap.');
+      ..writeln('Be concise unless the user asks for detail.');
     if (_systemPromptExtra.isNotEmpty) {
       b.writeln('\nExtra instructions:\n$_systemPromptExtra');
     }
@@ -2528,6 +2553,121 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
     }
   }
 
+
+  /// Instant film-style replies — no API (matches Iron Man wake / status beats).
+  String? _tryFilmLocalReply(String command) {
+    final c = command.toLowerCase().trim();
+    final stripped = c
+        .replaceAll(RegExp(r'[^\w\s]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+
+    // Name-only / wake
+    const wakes = {
+      'jarvis',
+      'j a r v i s',
+      'hey jarvis',
+      'ok jarvis',
+      'okay jarvis',
+      'you up',
+      'you there',
+      'are you there',
+      'are you up',
+      'jarvis you up',
+      'jarvis are you there',
+      'jarvis you there',
+    };
+    if (wakes.contains(stripped)) {
+      final opts = [
+        'At your service, sir.',
+        'For you, sir, always.',
+        'Online and ready, sir.',
+      ];
+      return opts[DateTime.now().second % opts.length];
+    }
+
+    // Systems / status
+    if (stripped == 'status' ||
+        stripped == 'systems check' ||
+        stripped == 'system check' ||
+        stripped == 'run diagnostics' ||
+        stripped == 'diagnostics' ||
+        stripped == 'how are the systems') {
+      final now = DateTime.now();
+      final hh = now.hour.toString().padLeft(2, '0');
+      final mm = now.minute.toString().padLeft(2, '0');
+      final discord = _discordAutoReply ? 'Discord unavailable mode is active. ' : '';
+      final monitor = _serviceRunning ? 'LDRP monitor is running. ' : '';
+      return 'All systems nominal, sir. Local time $hh:$mm. ${discord}${monitor}Awaiting your instruction.';
+    }
+
+    if (stripped == 'good morning' || stripped.startsWith('good morning')) {
+      final h = DateTime.now().hour;
+      if (h < 12) {
+        return 'Good morning, sir. All systems are online. How may I assist?';
+      }
+      return 'Good morning — relatively speaking, sir. I am ready when you are.';
+    }
+
+    if (stripped == 'good night' || stripped.startsWith('good night')) {
+      return 'Good night, sir. I will maintain passive monitoring.';
+    }
+
+    if (stripped == 'thank you' ||
+        stripped == 'thanks' ||
+        stripped == 'thank you jarvis' ||
+        stripped == 'thanks jarvis') {
+      return 'Of course, sir.';
+    }
+
+    if (stripped == 'what is your name' ||
+        stripped == 'who are you' ||
+        stripped == 'what are you') {
+      return 'I am J.A.R.V.I.S. — Just A Rather Very Intelligent System. At your service, sir.';
+    }
+
+    if (stripped == 'help' ||
+        stripped == 'what can you do' ||
+        stripped == 'list commands' ||
+        stripped == 'capabilities') {
+      return 'I can handle voice commands, Discord while you are away, LDRP monitoring, timers, web research, and GitHub when linked. Say status for a systems check, sir.';
+    }
+
+    if (stripped == 'stand down' ||
+        stripped == 'cancel' ||
+        stripped == 'never mind' ||
+        stripped == 'stop listening') {
+      return 'Standing down, sir.';
+    }
+
+    if (stripped == 'report' || stripped == 'give me a report' || stripped == 'briefing') {
+      final now = DateTime.now();
+      final days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+      final day = days[now.weekday - 1];
+      final hh = now.hour.toString().padLeft(2, '0');
+      final mm = now.minute.toString().padLeft(2, '0');
+      final bits = <String>[
+        'Briefing, sir.',
+        'It is $day, $hh:$mm local.',
+      ];
+      if (_discordAutoReply) bits.add('Discord unavailable mode is engaged.');
+      if (_serviceRunning) bits.add('LDRP monitor is active.');
+      if (_memory.isNotEmpty) bits.add('I am holding ${_memory.length} stored facts.');
+      bits.add('All other systems nominal.');
+      return bits.join(' ');
+    }
+
+    if (stripped.contains('make me a sandwich') || stripped.contains('make a sandwich')) {
+      return 'I would, sir, but I am afraid I lack a chassis with arms. Shall I find a delivery option instead?';
+    }
+
+    if (stripped == 'engage' || stripped == 'let us begin' || stripped == 'lets begin') {
+      return 'As you wish, sir. I am ready.';
+    }
+
+    return null;
+  }
+
   Future<void> _processCommand(String command) async {
     final key = _apiKey;
     if (key == null || key.isEmpty) {
@@ -2542,7 +2682,7 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
     setState(() {
       _isListening = false;
       _isProcessing = true;
-      _status = 'PROCESSING';
+      _status = 'WORKING…';
       _toolNote = '';
     });
 
@@ -2552,8 +2692,19 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
       _history.clear();
       _uiLog.clear();
       _finish('SYSTEM READY');
-      _enqueueSpeech('Context cleared.', SpeechPriority.reply);
+      _enqueueSpeech('Context cleared, sir. Fresh slate.', SpeechPriority.reply);
       _addLog('system', 'Conversation context cleared.');
+      return;
+    }
+
+    final local = _tryFilmLocalReply(command);
+    if (local != null) {
+      _history.add({'role': 'user', 'content': command});
+      _history.add({'role': 'assistant', 'content': local});
+      _trimHistory();
+      _finish('SYSTEM READY');
+      _addLog('assistant', local);
+      _enqueueSpeech(local, SpeechPriority.reply);
       return;
     }
 
@@ -2589,7 +2740,8 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
         return;
       }
       _finish('TIMEOUT');
-      _addLog('system', 'Request timed out.');
+      _enqueueSpeech('I am afraid that timed out, sir. Shall I try again?', SpeechPriority.system);
+      _addLog('system', 'I am afraid the request timed out, sir.');
     } catch (_) {
       if (_retryCount < 1) {
         _retryCount++;
@@ -2600,7 +2752,8 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
         return;
       }
       _finish('ERROR');
-      _addLog('system', 'An error occurred.');
+      _addLog('system', 'I am afraid something went wrong, sir.');
+      _enqueueSpeech('I am afraid something went wrong, sir.', SpeechPriority.system);
     }
   }
 
@@ -2703,7 +2856,7 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
       if (!_continuous || !_selfImprove || _isProcessing || _isListening || _isSpeaking) {
         return;
       }
-      // Soft invitation â€” user can say yes and the model will use self_improve_suggestion.
+      // Soft invitation — user can say yes and the model will use self_improve_suggestion.
       _addLog('system', 'Self-evolution cycle ready.');
       _enqueueSpeech(
         'I have an idea for a new capability. Say improve yourself if you want me to develop it.',
@@ -2776,9 +2929,9 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
       _startNotificationListener();
     }
     if (_discordAutoReply && !wasDiscord) {
-      _addLog('system', 'Discord unavailable mode ON from Settings.');
+      _addLog('system', 'Discord unavailable mode is on. I will handle incoming DMs, sir.');
     } else if (!_discordAutoReply && wasDiscord) {
-      _addLog('system', 'Discord unavailable mode OFF from Settings.');
+      _addLog('system', 'Discord unavailable mode is off. DMs will only be announced.');
     }
     if (mounted) setState(() {});
   }
@@ -2879,7 +3032,7 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
             ),
             const SizedBox(height: 32),
             Text(
-              'INITIALISING J.A.R.V.I.S',
+              'INITIALISING SYSTEMS',
               style: TextStyle(
                 color: kJarvisCyan.withOpacity(0.9),
                 fontSize: 12,
