@@ -1,0 +1,68 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      # The android/ folder isn't in the repo. Flutter generates it here, so
+      # you never have to create it by hand on a phone.
+      - name: Protect our own files
+        run: |
+          mkdir -p .keep
+          cp pubspec.yaml .keep/pubspec.yaml
+          cp lib/main.dart .keep/main.dart
+
+      - name: Generate Android scaffold
+        run: |
+          flutter create \
+            --project-name jarvis_assistant \
+            --org org.londondistrict \
+            --platforms=android \
+            .
+
+      - name: Restore our own files
+        run: |
+          cp .keep/pubspec.yaml pubspec.yaml
+          cp .keep/main.dart lib/main.dart
+          rm -rf .keep
+
+      - name: Patch manifest and minSdk
+        run: python3 tool/patch_android.py
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Rename APK
+        run: |
+          mv build/app/outputs/flutter-apk/app-release.apk \
+             build/app/outputs/flutter-apk/jarvis.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-apk
+          path: build/app/outputs/flutter-apk/jarvis.apk
+          retention-days: 30
