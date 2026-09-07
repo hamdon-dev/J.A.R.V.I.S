@@ -2715,36 +2715,7 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
           );
         }
 
-      default:
-        // Dynamic (self-developed) capabilities: execute via implementation hint.
-        Map<String, dynamic>? dyn;
-        for (final t in _dynamicTools) {
-          if (t['name'] == name) {
-            dyn = t;
-            break;
-          }
-        }
-        if (dyn != null) {
-          final uses = (dyn['use_count'] as num?)?.toInt() ?? 0;
-          dyn['use_count'] = uses + 1;
-          await _saveDynamicTools();
-          _note('Running ${dyn['name']}');
-          _addLog('system', 'Dynamic tool: ${dyn['name']}');
-          return jsonEncode({
-            'ok': true,
-            'dynamic': true,
-            'name': dyn['name'],
-            'description': dyn['description'],
-            'arguments': args,
-            'implementation_hint': dyn['implementation_hint'] ?? '',
-            'instruction':
-                'You are fulfilling a self-installed capability. Using the implementation_hint '
-                'and the given arguments, produce the actual result the user needs. '
-                'Do not claim you cannot run it — reason it through and return a concrete answer. '
-                'Then reply to the user in plain spoken sentences.',
-          });
-        }
-        
+
       case 'set_reminder':
         final mins = (args['minutes'] is num)
             ? (args['minutes'] as num).toDouble()
@@ -2814,8 +2785,40 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
         return jsonEncode(await _mindPush());
       case 'mind_ensure_schema':
         return jsonEncode(await _mindEnsureSchema());
-      
+      default:
+        // Dynamic (self-developed) capabilities: execute via implementation hint.
+        Map<String, dynamic>? dyn;
+        for (final t in _dynamicTools) {
+          if (t['name'] == name) {
+            dyn = t;
+            break;
+          }
+        }
+        if (dyn != null) {
+          final uses = (dyn['use_count'] as num?)?.toInt() ?? 0;
+          dyn['use_count'] = uses + 1;
+          await _saveDynamicTools();
+          _note('Running ${dyn['name']}');
+          _addLog('system', 'Dynamic tool: ${dyn['name']}');
+          return jsonEncode({
+            'ok': true,
+            'dynamic': true,
+            'name': dyn['name'],
+            'description': dyn['description'],
+            'arguments': args,
+            'implementation_hint': dyn['implementation_hint'] ?? '',
+            'instruction':
+                'You are fulfilling a self-installed capability. Using the implementation_hint '
+                'and the given arguments, produce the actual result the user needs. '
+                'Do not claim you cannot run it — reason it through and return a concrete answer. '
+                'Then reply to the user in plain spoken sentences.',
+          });
+        }
         return jsonEncode({'error': 'unknown tool', 'name': name});
+        
+
+      
+        
     }
   }
 
@@ -3240,6 +3243,38 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
       await _prefs?.setString(kPrefLastBriefDay, dayKey);
       await _deliverBriefing(proactive: true);
     });
+  }
+
+
+  Future<Map<String, dynamic>> _fetchStatus() async {
+    try {
+      final resp = await http
+          .get(Uri.parse('$kLdrpBase/players.json'))
+          .timeout(const Duration(seconds: 8));
+      if (resp.statusCode != 200) return {'online': false};
+      final list = jsonDecode(resp.body);
+      final names = <String>[];
+      if (list is List) {
+        for (final p in list) {
+          if (p is Map) {
+            final n = p['name']?.toString();
+            if (n != null && n.isNotEmpty) names.add(n);
+          }
+        }
+      }
+      return {
+        'online': true,
+        'player_count': names.length,
+        'players': names,
+        'monitoring_24_7': _serviceRunning,
+      };
+    } catch (e) {
+      return {
+        'online': false,
+        'error': e.toString(),
+        'monitoring_24_7': _serviceRunning,
+      };
+    }
   }
 
   Future<void> _deliverBriefing({bool proactive = false}) async {
@@ -4846,109 +4881,115 @@ class _SettingsScreenState extends State<_SettingsScreen> {
 
           _section('Behaviour'),
           _holoTile(
-            child: _holoTile(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('MYSQL MIND',
-                        style: TextStyle(
-                            color: kJarvisCyan,
-                            fontSize: 11,
-                            letterSpacing: 2)),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: _mysqlHostController,
-                      style: const TextStyle(color: Colors.white, fontSize: 13),
-                      decoration: const InputDecoration(
-                        isDense: true,
-                        border: InputBorder.none,
-                        labelText: 'Host',
-                        labelStyle: TextStyle(color: Colors.white38),
-                      ),
-                      onChanged: (v) =>
-                          widget.prefs?.setString(kPrefMysqlHost, v.trim()),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'MYSQL MIND',
+                    style: TextStyle(
+                      color: kJarvisCyan,
+                      fontSize: 11,
+                      letterSpacing: 2,
                     ),
-                    TextField(
-                      controller: _mysqlPortController,
-                      keyboardType: TextInputType.number,
-                      style: const TextStyle(color: Colors.white, fontSize: 13),
-                      decoration: const InputDecoration(
-                        isDense: true,
-                        border: InputBorder.none,
-                        labelText: 'Port',
-                        labelStyle: TextStyle(color: Colors.white38),
-                      ),
-                      onChanged: (v) => widget.prefs?.setInt(
-                          kPrefMysqlPort, int.tryParse(v) ?? 3306),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _mysqlHostController,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: InputBorder.none,
+                      labelText: 'Host',
+                      labelStyle: TextStyle(color: Colors.white38),
                     ),
-                    TextField(
-                      controller: _mysqlUserController,
-                      style: const TextStyle(color: Colors.white, fontSize: 13),
-                      decoration: const InputDecoration(
-                        isDense: true,
-                        border: InputBorder.none,
-                        labelText: 'User',
-                        labelStyle: TextStyle(color: Colors.white38),
-                      ),
-                      onChanged: (v) =>
-                          widget.prefs?.setString(kPrefMysqlUser, v.trim()),
+                    onChanged: (v) =>
+                        widget.prefs?.setString(kPrefMysqlHost, v.trim()),
+                  ),
+                  TextField(
+                    controller: _mysqlPortController,
+                    keyboardType: TextInputType.number,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: InputBorder.none,
+                      labelText: 'Port',
+                      labelStyle: TextStyle(color: Colors.white38),
                     ),
-                    TextField(
-                      controller: _mysqlPassController,
-                      obscureText: true,
-                      style: const TextStyle(color: Colors.white, fontSize: 13),
-                      decoration: const InputDecoration(
-                        isDense: true,
-                        border: InputBorder.none,
-                        labelText: 'Password',
-                        labelStyle: TextStyle(color: Colors.white38),
-                      ),
-                      onChanged: (v) {
-                        if (v.isEmpty) {
-                          widget.storage.delete(key: kMysqlPassKey);
-                        } else {
-                          widget.storage
-                              .write(key: kMysqlPassKey, value: v);
-                        }
-                      },
+                    onChanged: (v) => widget.prefs
+                        ?.setInt(kPrefMysqlPort, int.tryParse(v) ?? 3306),
+                  ),
+                  TextField(
+                    controller: _mysqlUserController,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: InputBorder.none,
+                      labelText: 'User',
+                      labelStyle: TextStyle(color: Colors.white38),
                     ),
-                    TextField(
-                      controller: _mysqlDbController,
-                      style: const TextStyle(color: Colors.white, fontSize: 13),
-                      decoration: const InputDecoration(
-                        isDense: true,
-                        border: InputBorder.none,
-                        labelText: 'Database',
-                        labelStyle: TextStyle(color: Colors.white38),
-                      ),
-                      onChanged: (v) => widget.prefs
-                          ?.setString(kPrefMysqlDb, v.trim().isEmpty ? 'jarvis_mind' : v.trim()),
+                    onChanged: (v) =>
+                        widget.prefs?.setString(kPrefMysqlUser, v.trim()),
+                  ),
+                  TextField(
+                    controller: _mysqlPassController,
+                    obscureText: true,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: InputBorder.none,
+                      labelText: 'Password',
+                      labelStyle: TextStyle(color: Colors.white38),
                     ),
-                    TextField(
-                      controller: _mysqlOwnerController,
-                      style: const TextStyle(color: Colors.white, fontSize: 13),
-                      decoration: const InputDecoration(
-                        isDense: true,
-                        border: InputBorder.none,
-                        labelText: 'Owner key',
-                        labelStyle: TextStyle(color: Colors.white38),
-                      ),
-                      onChanged: (v) => widget.prefs?.setString(
-                          kPrefMysqlOwner,
-                          v.trim().isEmpty ? 'default' : v.trim()),
+                    onChanged: (v) {
+                      if (v.isEmpty) {
+                        widget.storage.delete(key: kMysqlPassKey);
+                      } else {
+                        widget.storage.write(key: kMysqlPassKey, value: v);
+                      }
+                    },
+                  ),
+                  TextField(
+                    controller: _mysqlDbController,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: InputBorder.none,
+                      labelText: 'Database',
+                      labelStyle: TextStyle(color: Colors.white38),
                     ),
-                    Text(
-                      'Auto-creates database & tables on first connect. User needs CREATE privilege. LAN/VPN only.',
-                      style: TextStyle(
-                          color: Colors.white.withOpacity(0.35), fontSize: 10.5),
+                    onChanged: (v) => widget.prefs?.setString(
+                      kPrefMysqlDb,
+                      v.trim().isEmpty ? 'jarvis_mind' : v.trim(),
                     ),
-                  ],
-                ),
+                  ),
+                  TextField(
+                    controller: _mysqlOwnerController,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: InputBorder.none,
+                      labelText: 'Owner key',
+                      labelStyle: TextStyle(color: Colors.white38),
+                    ),
+                    onChanged: (v) => widget.prefs?.setString(
+                      kPrefMysqlOwner,
+                      v.trim().isEmpty ? 'default' : v.trim(),
+                    ),
+                  ),
+                  Text(
+                    'Auto-creates database and tables. Needs CREATE privilege. Use LAN or VPN only.',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.35),
+                      fontSize: 10.5,
+                    ),
+                  ),
+                ],
               ),
             ),
-            SwitchListTile(
+          ),
+          SwitchListTile(
               value: widget.prefs?.getBool(kPrefMorningBrief) ?? true,
               activeColor: kJarvisCyan,
               title: const Text('Morning briefing',
