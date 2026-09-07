@@ -1489,7 +1489,7 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
     _addLog('system', 'LDRP monitor offline, sir.');
   }
 
-  void _loadSettings() {
+  Future<void> _loadSettings() async {
     final p = _prefs;
     if (p == null) return;
     _model = p.getString(kPrefModel) ?? kDefaultModel;
@@ -1579,7 +1579,6 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
               _memory.removeAt(0);
             }
             await _saveMemory();
-          _syncPullAndPush();
           }
         }
       }
@@ -5025,7 +5024,6 @@ class _SettingsScreenState extends State<_SettingsScreen> {
                 widget.prefs?.setBool(kPrefContinuous, v);
               },
             ),
-          ),
           _holoTile(
             child: SwitchListTile(
               value: _toolsEnabled,
@@ -5433,7 +5431,7 @@ class _SettingsScreenState extends State<_SettingsScreen> {
             Padding(
               padding: const EdgeInsets.only(left: 6, bottom: 8),
               child: Text(
-                'None yet. Say â€œimprove yourselfâ€ in hands-free mode to develop new ones.',
+                'None yet. Say "improve yourself" in hands-free mode to develop new ones.',
                 style: TextStyle(color: Colors.white.withOpacity(0.35), fontSize: 12),
               ),
             ),
@@ -5444,7 +5442,7 @@ class _SettingsScreenState extends State<_SettingsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '·  ${t['name']}  Â·  used ${t['use_count'] ?? 0}Ã—',
+                    '·  ${t['name']}  ·  used ${t['use_count'] ?? 0}×',
                     style: TextStyle(
                         color: Colors.white.withOpacity(0.65), fontSize: 12.5),
                   ),
