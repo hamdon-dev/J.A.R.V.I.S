@@ -1,7 +1,7 @@
 name: jarvis
 description: J.A.R.V.I.S. — Iron Man style personal AI assistant
 publish_to: "none"
-version: 1.0.0+1
+version: 1.1.0+2
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -21,6 +21,7 @@ dependencies:
   notification_listener_service: ^0.3.4
   flutter_foreground_task: ^8.10.0
   local_auth: ^2.3.0
+  mysql1: ^0.20.0
 
 dev_dependencies:
   flutter_test:
