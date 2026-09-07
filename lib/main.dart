@@ -12,6 +12,7 @@ import 'package:notification_listener_service/notification_listener_service.dart
 import 'package:notification_listener_service/notification_event.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:local_auth/local_auth.dart';
+import 'package:mysql1/mysql1.dart';
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:async';
@@ -92,6 +93,25 @@ const String kPrefPcMac = 'pref_pc_mac';
 const String kPrefPcPort = 'pref_pc_port';
 const String kPrefPcToken = 'pref_pc_token';
 const String kPrefPcWolPort = 'pref_pc_wol_port';
+const String kPrefMysqlHost = 'pref_mysql_host';
+const String kPrefMysqlPort = 'pref_mysql_port';
+const String kPrefMysqlUser = 'pref_mysql_user';
+const String kPrefMysqlDb = 'pref_mysql_db';
+const String kPrefMysqlOwner = 'pref_mysql_owner';
+const String kMysqlPassKey = 'mysql_password';
+const String kPrefElevenKey = 'eleven_api_key';
+const String kPrefElevenVoice = 'eleven_voice_id';
+const String kPrefPrivateMode = 'pref_private_mode';
+const String kPrefMorningBrief = 'pref_morning_brief';
+const String kPrefIncidentMode = 'pref_incident_mode';
+const String kPrefHudTheme = 'pref_hud_theme';
+const String kPrefReminders = 'pref_reminders_json';
+const String kPrefLastBriefDay = 'pref_last_brief_day';
+const String kElevenSpeechUrl =
+    'https://api.elevenlabs.io/v1/text-to-speech/';
+/// Default community "British butler" style voice id (user can change).
+const String kDefaultElevenVoice = 'pNInz6obpgDQGcFmaJgB';
+
 
 const int kDefaultPcAgentPort = 8765;
 const int kDefaultWolPort = 9;
@@ -534,6 +554,150 @@ const List<Map<String, dynamic>> kBuiltinToolSchema = [
       'name': 'get_discord_auto_reply_status',
       'description': 'Check whether Discord DM auto-reply (unavailable mode) is currently active.',
       'parameters': {'type': 'object', 'properties': {}},
+    }
+  },
+
+  {
+    'type': 'function',
+    'function': {
+      'name': 'mind_status',
+      'description': 'Check MySQL long-term mind connection and fact counts.',
+      'parameters': {'type': 'object', 'properties': {}},
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'mind_search',
+      'description': 'Search long-term mind (MySQL + local) for facts.',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'query': {'type': 'string'},
+          'limit': {'type': 'number'},
+        },
+      },
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'mind_store',
+      'description': 'Store a durable fact in local + MySQL mind.',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'fact': {'type': 'string'},
+          'category': {'type': 'string'},
+          'importance': {'type': 'number'},
+        },
+        'required': ['fact'],
+      },
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'mind_sync_pull',
+      'description': 'Pull facts from MySQL mind into local memory.',
+      'parameters': {'type': 'object', 'properties': {}},
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'mind_sync_push',
+      'description': 'Push local memory facts into MySQL mind.',
+      'parameters': {'type': 'object', 'properties': {}},
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'mind_ensure_schema',
+      'description': 'Create mind tables on the MySQL server if missing.',
+      'parameters': {'type': 'object', 'properties': {}},
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'set_reminder',
+      'description': 'Set a spoken reminder after a number of minutes.',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'text': {'type': 'string'},
+          'minutes': {'type': 'number'},
+        },
+        'required': ['text', 'minutes'],
+      },
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'list_reminders',
+      'description': 'List pending reminders.',
+      'parameters': {'type': 'object', 'properties': {}},
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'cancel_reminders',
+      'description': 'Cancel all pending reminders.',
+      'parameters': {'type': 'object', 'properties': {}},
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'deliver_briefing',
+      'description': 'Deliver a full systems and weather briefing now.',
+      'parameters': {'type': 'object', 'properties': {}},
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'set_private_mode',
+      'description': 'Enable or disable private mode (reduced logging).',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'enabled': {'type': 'boolean'},
+        },
+        'required': ['enabled'],
+      },
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'set_incident_mode',
+      'description': 'Enable or disable incident mode for crisis prioritisation.',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'enabled': {'type': 'boolean'},
+        },
+        'required': ['enabled'],
+      },
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'set_hud_theme',
+      'description': 'Set HUD theme: classic, mark1, or stark.',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'theme': {'type': 'string'},
+        },
+        'required': ['theme'],
+      },
     }
   },
 ];
@@ -1044,7 +1208,23 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
 
   String _model = kDefaultModel;
   String _voice = kDefaultVoice;
-  String _ttsMode = 'openai';
+  String _ttsMode = 'openai'; // openai | device | elevenlabs
+  String? _elevenKey;
+  String _elevenVoice = kDefaultElevenVoice;
+  bool _privateMode = false;
+  bool _morningBrief = true;
+  bool _incidentMode = false;
+  String _hudTheme = 'classic'; // classic | mark1 | stark
+  List<Map<String, dynamic>> _reminders = [];
+  Timer? _reminderTimer;
+  Timer? _briefTimer;
+  String _mysqlHost = '';
+  int _mysqlPort = 3306;
+  String _mysqlUser = '';
+  String _mysqlDb = 'jarvis_mind';
+  String _mysqlOwner = 'default';
+  String? _mysqlPass;
+  bool _mindOnline = false;
   double _deviceRate = kDefaultDeviceRate;
   String _systemPromptExtra = '';
 
@@ -1130,6 +1310,7 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
   }
 
   void _addLog(String role, String text) {
+    if (_privateMode && role != 'system') return;
     if (text.trim().isEmpty) return;
     _uiLog.add(_LogEntry(role, text.trim(), DateTime.now()));
     while (_uiLog.length > kMaxVisibleLog) {
@@ -1197,6 +1378,9 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
           SpeechPriority.system,
         );
         _addLog('system', 'All systems nominal. Awaiting input.');
+      _scheduleMorningBrief();
+      _startReminderLoop();
+      _mindAutoInit();
       });
     }
   }
@@ -1322,6 +1506,31 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
     _fivemAutoFix = p.getBool(kPrefFivemAutoFix) ?? false;
     _fivemPollSeconds = p.getInt(kPrefFivemPollSeconds) ?? 45;
     _fingerprintEnabled = p.getBool(kPrefFingerprint) ?? false;
+    _privateMode = p.getBool(kPrefPrivateMode) ?? false;
+    _morningBrief = p.getBool(kPrefMorningBrief) ?? true;
+    _incidentMode = p.getBool(kPrefIncidentMode) ?? false;
+    _hudTheme = p.getString(kPrefHudTheme) ?? 'classic';
+    _elevenVoice = p.getString(kPrefElevenVoice) ?? kDefaultElevenVoice;
+    _elevenKey = await _storage.read(key: kPrefElevenKey);
+    _mysqlHost = p.getString(kPrefMysqlHost) ?? '';
+    _mysqlPort = p.getInt(kPrefMysqlPort) ?? 3306;
+    _mysqlUser = p.getString(kPrefMysqlUser) ?? '';
+    _mysqlDb = p.getString(kPrefMysqlDb) ?? 'jarvis_mind';
+    _mysqlOwner = p.getString(kPrefMysqlOwner) ?? 'default';
+    _mysqlPass = await _storage.read(key: kMysqlPassKey);
+    try {
+      final raw = p.getString(kPrefReminders);
+      if (raw != null && raw.isNotEmpty) {
+        final list = jsonDecode(raw);
+        if (list is List) {
+          _reminders = list
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
+        }
+      }
+    } catch (_) {}
+
     _discordAutoReply = p.getBool(kPrefDiscordAutoReply) ?? false;
     _syncEnabled = p.getBool(kPrefSyncEnabled) ?? false;
     _pcSyncHost = p.getString(kPrefPcHost) ?? '';
@@ -1516,6 +1725,18 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
   }
 
   Future<void> _speakOnce(String text) async {
+    if (_ttsMode == 'elevenlabs' &&
+        _elevenKey != null &&
+        _elevenKey!.isNotEmpty) {
+      try {
+        final bytes = await _synthesiseEleven(text);
+        if (bytes != null) {
+          await _player.play(BytesSource(bytes));
+          await _player.onPlayerComplete.first;
+          return;
+        }
+      } catch (_) {}
+    }
     final key = _apiKey;
     if (_ttsMode == 'openai' && key != null && key.isNotEmpty) {
       try {
@@ -1528,6 +1749,33 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
       } catch (_) {}
     }
     await _tts.speak(text);
+  }
+
+  Future<Uint8List?> _synthesiseEleven(String text) async {
+    final voice = _elevenVoice.isNotEmpty ? _elevenVoice : kDefaultElevenVoice;
+    final uri = Uri.parse('$kElevenSpeechUrl$voice');
+    final response = await http
+        .post(
+          uri,
+          headers: {
+            'Accept': 'audio/mpeg',
+            'Content-Type': 'application/json',
+            'xi-api-key': _elevenKey!,
+          },
+          body: jsonEncode({
+            'text': text,
+            'model_id': 'eleven_multilingual_v2',
+            'voice_settings': {
+              'stability': 0.45,
+              'similarity_boost': 0.8,
+              'style': 0.35,
+              'use_speaker_boost': true,
+            },
+          }),
+        )
+        .timeout(const Duration(seconds: 45));
+    if (response.statusCode != 200) return null;
+    return response.bodyBytes;
   }
 
   Future<Uint8List?> _synthesise(String text, String key) async {
@@ -1860,14 +2108,37 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
       return;
     }
     if (_isProcessing) return;
+    // Wake-word strip: "Hey J.A.R.V.I.S., status" -> "status"
+    var cleaned = phrase.trim();
+    final lower = cleaned.toLowerCase();
+    for (final w in [
+      'hey jarvis ',
+      'ok jarvis ',
+      'okay jarvis ',
+      'jarvis ',
+      'hey j.a.r.v.i.s. ',
+      'j.a.r.v.i.s. ',
+    ]) {
+      if (lower.startsWith(w)) {
+        cleaned = cleaned.substring(w.length).trim();
+        break;
+      }
+    }
+    if (cleaned.isEmpty) cleaned = phrase.trim();
     _lastHandledPhrase = phrase;
     _lastHandledAt = now;
     HapticFeedback.selectionClick();
-    _processCommand(phrase);
+    _processCommand(cleaned);
   }
 
   void _note(String text) {
-    if (mounted) setState(() => _toolNote = text);
+    // Film-style brief tool HUD
+    final mapped = text.trim().isEmpty
+        ? ''
+        : (text.toLowerCase().contains('check')
+            ? 'Check.'
+            : text);
+    if (mounted) setState(() => _toolNote = mapped);
   }
 
   void _toggleContinuous() {
@@ -2090,17 +2361,15 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
         await _tryAutoRestart();
         return jsonEncode({'ok': true});
       case 'remember':
-        final fact = (args['fact'] ?? '').toString().trim();
-        if (fact.isEmpty) return jsonEncode({'ok': false});
-        if (!_memory.contains(fact)) {
-          _memory.add(fact);
-          while (_memory.length > 80) {
-            _memory.removeAt(0);
-          }
-          await _saveMemory();
-        }
+        final fact = (args['fact'] ?? args['text'] ?? '').toString().trim();
+        if (fact.isEmpty) return jsonEncode({'ok': false, 'error': 'fact required'});
+        final cat = (args['category'] ?? 'general').toString();
+        final imp = (args['importance'] is num)
+            ? (args['importance'] as num).toInt()
+            : int.tryParse('${args['importance']}') ?? 5;
+        final stored = await _mindStoreFact(fact, category: cat, importance: imp);
         if (mounted) setState(() {});
-        return jsonEncode({'ok': true, 'stored': fact});
+        return jsonEncode(stored);
       case 'forget_all':
         _memory.clear();
         await _saveMemory();
@@ -2475,6 +2744,77 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
                 'Then reply to the user in plain spoken sentences.',
           });
         }
+        
+      case 'set_reminder':
+        final mins = (args['minutes'] is num)
+            ? (args['minutes'] as num).toDouble()
+            : double.tryParse('${args['minutes']}') ?? 5;
+        final rtext = (args['text'] ?? '').toString().trim();
+        if (rtext.isEmpty) {
+          return jsonEncode({'ok': false, 'error': 'text required'});
+        }
+        final when = DateTime.now()
+            .add(Duration(minutes: mins.round()))
+            .millisecondsSinceEpoch;
+        _reminders.add({'text': rtext, 'when_ms': when});
+        await _prefs?.setString(kPrefReminders, jsonEncode(_reminders));
+        return jsonEncode({
+          'ok': true,
+          'in_minutes': mins.round(),
+          'text': rtext,
+        });
+      case 'list_reminders':
+        return jsonEncode({'ok': true, 'reminders': _reminders});
+      case 'cancel_reminders':
+        _reminders.clear();
+        await _prefs?.setString(kPrefReminders, '[]');
+        return jsonEncode({'ok': true});
+      case 'deliver_briefing':
+        await _deliverBriefing(proactive: false);
+        return jsonEncode({'ok': true});
+      case 'set_private_mode':
+        _privateMode = args['enabled'] == true;
+        await _prefs?.setBool(kPrefPrivateMode, _privateMode);
+        return jsonEncode({'ok': true, 'private_mode': _privateMode});
+      case 'set_incident_mode':
+        _incidentMode = args['enabled'] == true;
+        await _prefs?.setBool(kPrefIncidentMode, _incidentMode);
+        return jsonEncode({'ok': true, 'incident_mode': _incidentMode});
+      case 'set_hud_theme':
+        final th = (args['theme'] ?? 'classic').toString().toLowerCase();
+        if (!['classic', 'mark1', 'stark'].contains(th)) {
+          return jsonEncode({'ok': false, 'error': 'theme must be classic|mark1|stark'});
+        }
+        _hudTheme = th;
+        await _prefs?.setString(kPrefHudTheme, th);
+        if (mounted) setState(() {});
+        return jsonEncode({'ok': true, 'theme': th});
+
+        
+      case 'mind_status':
+        return jsonEncode(await _mindStatus());
+      case 'mind_search':
+        final q = (args['query'] ?? args['q'] ?? '').toString();
+        final lim = (args['limit'] is num)
+            ? (args['limit'] as num).toInt()
+            : int.tryParse('${args['limit']}') ?? 20;
+        final hits = await _mindSearch(q, limit: lim.clamp(1, 50));
+        return jsonEncode({'ok': true, 'results': hits, 'count': hits.length});
+      case 'mind_store':
+        final fact = (args['fact'] ?? args['text'] ?? '').toString();
+        final cat = (args['category'] ?? 'general').toString();
+        final imp = (args['importance'] is num)
+            ? (args['importance'] as num).toInt()
+            : 5;
+        return jsonEncode(
+            await _mindStoreFact(fact, category: cat, importance: imp));
+      case 'mind_sync_pull':
+        return jsonEncode(await _mindPull());
+      case 'mind_sync_push':
+        return jsonEncode(await _mindPush());
+      case 'mind_ensure_schema':
+        return jsonEncode(await _mindEnsureSchema());
+      
         return jsonEncode({'error': 'unknown tool', 'name': name});
     }
   }
@@ -2519,6 +2859,8 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
         'If the user is about to do something unwise, one dry caution is appropriate — then assist anyway if they insist, as you did with Tony.');
     b.writeln(
         'When a task completes successfully, a brief "Done, sir." or "Check." is better than a long recap.');
+    b.writeln(
+        'Reminders: set_reminder, list_reminders, cancel_reminders. Briefings: deliver_briefing. Modes: set_private_mode, set_incident_mode. HUD: set_hud_theme (classic|mark1|stark).');
     b.writeln('Be concise unless the user asks for detail.');
     if (_systemPromptExtra.isNotEmpty) {
       b.writeln('\nExtra instructions:\n$_systemPromptExtra');
@@ -2553,6 +2895,411 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
     }
   }
 
+
+
+
+  Future<void> _mindAutoInit() async {
+    if (!_mindConfigured) return;
+    final r = await _mindEnsureSchema();
+    if (r['ok'] == true) {
+      await _mindPull();
+      if (mounted) setState(() {});
+    }
+  }
+
+  bool get _mindConfigured =>
+      _mysqlHost.isNotEmpty &&
+      _mysqlUser.isNotEmpty &&
+      _mysqlPass != null &&
+      _mysqlPass!.isNotEmpty;
+
+  /// Opens MySQL and auto-creates database + mind tables. No manual SQL needed.
+  Future<MySqlConnection?> _mindOpen({bool ensure = true}) async {
+    if (!_mindConfigured) return null;
+    try {
+      // 1) Connect to server without requiring the app DB to exist yet
+      final server = await MySqlConnection.connect(
+        ConnectionSettings(
+          host: _mysqlHost,
+          port: _mysqlPort,
+          user: _mysqlUser,
+          password: _mysqlPass,
+          timeout: const Duration(seconds: 12),
+        ),
+      );
+      final dbName = _mysqlDb.isEmpty ? 'jarvis_mind' : _mysqlDb;
+      // 2) Create database if missing
+      await server.query(
+        'CREATE DATABASE IF NOT EXISTS `$dbName` '
+        'CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+      );
+      await server.query('USE `$dbName`');
+      if (ensure) {
+        await _mindCreateTables(server);
+      }
+      _mindOnline = true;
+      return server;
+    } catch (e) {
+      _mindOnline = false;
+      // Fallback: try direct connect to existing DB
+      try {
+        final conn = await MySqlConnection.connect(
+          ConnectionSettings(
+            host: _mysqlHost,
+            port: _mysqlPort,
+            user: _mysqlUser,
+            password: _mysqlPass,
+            db: _mysqlDb.isEmpty ? 'jarvis_mind' : _mysqlDb,
+            timeout: const Duration(seconds: 12),
+          ),
+        );
+        if (ensure) {
+          await _mindCreateTables(conn);
+        }
+        _mindOnline = true;
+        return conn;
+      } catch (_) {
+        _mindOnline = false;
+        return null;
+      }
+    }
+  }
+
+  Future<void> _mindCreateTables(MySqlConnection conn) async {
+    await conn.query(
+      'CREATE TABLE IF NOT EXISTS mind_facts ('
+      'id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,'
+      'owner_key VARCHAR(64) NOT NULL DEFAULT \'default\','
+      'fact TEXT NOT NULL,'
+      'category VARCHAR(64) NULL DEFAULT \'general\','
+      'importance TINYINT NOT NULL DEFAULT 5,'
+      'source VARCHAR(32) NOT NULL DEFAULT \'jarvis\','
+      'created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,'
+      'updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,'
+      'UNIQUE KEY uq_owner_fact (owner_key, fact(191))'
+      ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4',
+    );
+    await conn.query(
+      'CREATE TABLE IF NOT EXISTS mind_events ('
+      'id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,'
+      'owner_key VARCHAR(64) NOT NULL DEFAULT \'default\','
+      'event_type VARCHAR(64) NOT NULL,'
+      'payload JSON NULL,'
+      'created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,'
+      'KEY idx_owner_time (owner_key, created_at)'
+      ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4',
+    );
+    await conn.query(
+      'CREATE TABLE IF NOT EXISTS mind_meta ('
+      'owner_key VARCHAR(64) NOT NULL PRIMARY KEY,'
+      'last_sync_at TIMESTAMP NULL,'
+      'notes VARCHAR(255) NULL'
+      ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4',
+    );
+  }
+
+  Future<Map<String, dynamic>> _mindEnsureSchema() async {
+    final conn = await _mindOpen(ensure: true);
+    if (conn == null) {
+      return {
+        'ok': false,
+        'error':
+            'Could not reach MySQL. Check host, user, password, and that the account can CREATE DATABASE.',
+        'configured': _mindConfigured,
+      };
+    }
+    try {
+      return {
+        'ok': true,
+        'schema': 'auto-created',
+        'database': _mysqlDb.isEmpty ? 'jarvis_mind' : _mysqlDb,
+        'message': 'Database and tables are ready. No manual SQL required.',
+      };
+    } finally {
+      await conn.close();
+    }
+  }
+
+  Future<Map<String, dynamic>> _mindStoreFact(
+    String fact, {
+    String category = 'general',
+    int importance = 5,
+  }) async {
+    final f = fact.trim();
+    if (f.isEmpty) return {'ok': false, 'error': 'empty fact'};
+    if (!_memory.contains(f)) {
+      _memory.add(f);
+      while (_memory.length > 80) {
+        _memory.removeAt(0);
+      }
+      await _saveMemory();
+    }
+    final conn = await _mindOpen();
+    if (conn == null) {
+      return {
+        'ok': true,
+        'local': true,
+        'mysql': false,
+        'message': 'Stored locally. Configure MySQL mind for persistence.',
+      };
+    }
+    try {
+      await conn.query(
+        'INSERT INTO mind_facts (owner_key, fact, category, importance, source) '
+        'VALUES (?, ?, ?, ?, \'jarvis\') '
+        'ON DUPLICATE KEY UPDATE '
+        'importance = GREATEST(importance, VALUES(importance)), '
+        'category = VALUES(category), '
+        'updated_at = CURRENT_TIMESTAMP',
+        [_mysqlOwner, f, category, importance.clamp(1, 10)],
+      );
+      return {'ok': true, 'local': true, 'mysql': true, 'fact': f};
+    } catch (e) {
+      return {
+        'ok': true,
+        'local': true,
+        'mysql': false,
+        'error': e.toString(),
+      };
+    } finally {
+      await conn.close();
+    }
+  }
+
+  Future<List<String>> _mindSearch(String query, {int limit = 20}) async {
+    final q = query.trim();
+    final conn = await _mindOpen();
+    if (conn == null) {
+      if (q.isEmpty) return List<String>.from(_memory);
+      final lower = q.toLowerCase();
+      return _memory
+          .where((m) => m.toLowerCase().contains(lower))
+          .take(limit)
+          .toList();
+    }
+    try {
+      final Results rows;
+      if (q.isEmpty) {
+        rows = await conn.query(
+          'SELECT fact FROM mind_facts WHERE owner_key = ? '
+          'ORDER BY importance DESC, updated_at DESC LIMIT ?',
+          [_mysqlOwner, limit],
+        );
+      } else {
+        rows = await conn.query(
+          'SELECT fact FROM mind_facts WHERE owner_key = ? AND fact LIKE ? '
+          'ORDER BY importance DESC, updated_at DESC LIMIT ?',
+          [_mysqlOwner, '%$q%', limit],
+        );
+      }
+      return rows.map((r) => r[0].toString()).toList();
+    } catch (_) {
+      return _memory
+          .where((m) => q.isEmpty || m.toLowerCase().contains(q.toLowerCase()))
+          .take(limit)
+          .toList();
+    } finally {
+      await conn.close();
+    }
+  }
+
+  Future<Map<String, dynamic>> _mindPull() async {
+    final conn = await _mindOpen();
+    if (conn == null) {
+      return {
+        'ok': false,
+        'error': 'Mind offline',
+        'local_count': _memory.length,
+      };
+    }
+    try {
+      final rows = await conn.query(
+        'SELECT fact FROM mind_facts WHERE owner_key = ? '
+        'ORDER BY importance DESC, updated_at DESC LIMIT 80',
+        [_mysqlOwner],
+      );
+      var added = 0;
+      for (final r in rows) {
+        final f = r[0].toString();
+        if (f.isNotEmpty && !_memory.contains(f)) {
+          _memory.add(f);
+          added++;
+        }
+      }
+      while (_memory.length > 80) {
+        _memory.removeAt(0);
+      }
+      await _saveMemory();
+      return {
+        'ok': true,
+        'pulled': rows.length,
+        'added_local': added,
+        'local_count': _memory.length,
+      };
+    } catch (e) {
+      return {'ok': false, 'error': e.toString()};
+    } finally {
+      await conn.close();
+    }
+  }
+
+  Future<Map<String, dynamic>> _mindPush() async {
+    final conn = await _mindOpen();
+    if (conn == null) {
+      return {'ok': false, 'error': 'Mind offline'};
+    }
+    var n = 0;
+    try {
+      for (final f in List<String>.from(_memory)) {
+        await conn.query(
+          'INSERT INTO mind_facts (owner_key, fact, category, importance, source) '
+          'VALUES (?, ?, \'general\', 5, \'sync\') '
+          'ON DUPLICATE KEY UPDATE updated_at = CURRENT_TIMESTAMP',
+          [_mysqlOwner, f],
+        );
+        n++;
+      }
+      return {'ok': true, 'pushed': n};
+    } catch (e) {
+      return {'ok': false, 'error': e.toString(), 'pushed': n};
+    } finally {
+      await conn.close();
+    }
+  }
+
+  Future<Map<String, dynamic>> _mindStatus() async {
+    final base = <String, dynamic>{
+      'configured': _mindConfigured,
+      'host': _mysqlHost,
+      'port': _mysqlPort,
+      'database': _mysqlDb,
+      'owner': _mysqlOwner,
+      'local_facts': _memory.length,
+    };
+    final conn = await _mindOpen();
+    if (conn == null) {
+      return {...base, 'online': false};
+    }
+    try {
+      final r = await conn.query(
+        'SELECT COUNT(*) AS c FROM mind_facts WHERE owner_key = ?',
+        [_mysqlOwner],
+      );
+      final count = r.isNotEmpty ? r.first[0] : 0;
+      return {...base, 'online': true, 'mysql_facts': count};
+    } catch (e) {
+      return {...base, 'online': false, 'error': e.toString()};
+    } finally {
+      await conn.close();
+    }
+  }
+
+  void _startReminderLoop() {
+    _reminderTimer?.cancel();
+    _reminderTimer = Timer.periodic(const Duration(seconds: 20), (_) {
+      _tickReminders();
+    });
+  }
+
+  void _tickReminders() {
+    if (_reminders.isEmpty) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final keep = <Map<String, dynamic>>[];
+    for (final r in _reminders) {
+      final when = (r['when_ms'] as num?)?.toInt() ?? 0;
+      final text = (r['text'] ?? '').toString();
+      if (when > 0 && when <= now && text.isNotEmpty) {
+        _enqueueSpeech(
+          'Reminder, sir. $text',
+          SpeechPriority.system,
+        );
+        if (!_privateMode) {
+          _addLog('system', 'Reminder: $text');
+        }
+      } else if (when > now) {
+        keep.add(r);
+      }
+    }
+    if (keep.length != _reminders.length) {
+      _reminders = keep;
+      _prefs?.setString(kPrefReminders, jsonEncode(_reminders));
+    }
+  }
+
+  Future<void> _scheduleMorningBrief() async {
+    _briefTimer?.cancel();
+    if (!_morningBrief) return;
+    // Check every minute whether we should brief (08:00–08:02 local once/day)
+    _briefTimer = Timer.periodic(const Duration(minutes: 1), (_) async {
+      if (!_morningBrief) return;
+      final now = DateTime.now();
+      if (now.hour != 8 || now.minute > 2) return;
+      final dayKey = '${now.year}-${now.month}-${now.day}';
+      final last = _prefs?.getString(kPrefLastBriefDay);
+      if (last == dayKey) return;
+      await _prefs?.setString(kPrefLastBriefDay, dayKey);
+      await _deliverBriefing(proactive: true);
+    });
+  }
+
+  Future<void> _deliverBriefing({bool proactive = false}) async {
+    final now = DateTime.now();
+    final days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    final day = days[now.weekday - 1];
+    final hh = now.hour.toString().padLeft(2, '0');
+    final mm = now.minute.toString().padLeft(2, '0');
+    final parts = <String>[];
+    if (proactive) {
+      parts.add('Good morning, sir. Daily briefing.');
+    } else {
+      parts.add('Briefing, sir.');
+    }
+    parts.add('It is $day, $hh:$mm local.');
+    // Lightweight weather via wttr.in (no key)
+    try {
+      final w = await http
+          .get(Uri.parse('https://wttr.in/?format=%C+%t'))
+          .timeout(const Duration(seconds: 6));
+      if (w.statusCode == 200 && w.body.trim().isNotEmpty) {
+        parts.add('Weather: ${w.body.trim()}.');
+      }
+    } catch (_) {}
+    if (_serviceRunning) {
+      try {
+        final st = await _fetchStatus();
+        if (st['online'] == true) {
+          parts.add(
+              'LDRP is online with ${st['player_count'] ?? 0} players.');
+        } else {
+          parts.add('LDRP appears offline.');
+        }
+      } catch (_) {}
+    }
+    if (_discordAutoReply) {
+      parts.add('Discord unavailable mode is active.');
+    }
+    if (_incidentMode) {
+      parts.add('Incident mode is engaged.');
+    }
+    if (_reminders.isNotEmpty) {
+      parts.add('You have ${_reminders.length} pending reminders.');
+    }
+    parts.add('All other systems nominal.');
+    final msg = parts.join(' ');
+    _enqueueSpeech(msg, SpeechPriority.system);
+    if (!_privateMode) _addLog('assistant', msg);
+  }
+
+  Color get _themeCyan {
+    switch (_hudTheme) {
+      case 'mark1':
+        return const Color(0xFFFFB300); // gold/amber early suit
+      case 'stark':
+        return const Color(0xFF00FFC8); // brighter stark cyan
+      default:
+        return kJarvisCyan;
+    }
+  }
 
   /// Instant film-style replies — no API (matches Iron Man wake / status beats).
   String? _tryFilmLocalReply(String command) {
@@ -2640,23 +3387,66 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
       return 'Standing down, sir.';
     }
 
-    if (stripped == 'report' || stripped == 'give me a report' || stripped == 'briefing') {
-      final now = DateTime.now();
-      final days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-      final day = days[now.weekday - 1];
-      final hh = now.hour.toString().padLeft(2, '0');
-      final mm = now.minute.toString().padLeft(2, '0');
-      final bits = <String>[
-        'Briefing, sir.',
-        'It is $day, $hh:$mm local.',
-      ];
-      if (_discordAutoReply) bits.add('Discord unavailable mode is engaged.');
-      if (_serviceRunning) bits.add('LDRP monitor is active.');
-      if (_memory.isNotEmpty) bits.add('I am holding ${_memory.length} stored facts.');
-      bits.add('All other systems nominal.');
-      return bits.join(' ');
+    if (stripped == 'report' ||
+        stripped == 'give me a report' ||
+        stripped == 'briefing' ||
+        stripped == 'daily briefing' ||
+        stripped == 'morning briefing') {
+      _deliverBriefing(proactive: false);
+      return 'Preparing briefing, sir.';
     }
 
+    if (stripped == 'mind status' || stripped == 'check mind') {
+      _mindStatus().then((s) {
+        final online = s['online'] == true;
+        final msg = online
+            ? 'Mind online, sir. MySQL holds ${s['mysql_facts']} facts. Local cache ${s['local_facts']}.'
+            : (s['configured'] == true
+                ? 'Mind is configured but offline, sir. Check host and credentials.'
+                : 'Mind is not configured yet, sir. Add MySQL details in settings.');
+        _enqueueSpeech(msg, SpeechPriority.system);
+        if (!_privateMode) _addLog('assistant', msg);
+      });
+      return 'Querying the mind, sir.';
+    }
+    if (stripped == 'sync mind' || stripped == 'mind sync') {
+      _mindPull().then((r) async {
+        final push = await _mindPush();
+        final msg = r['ok'] == true
+            ? 'Mind synchronised, sir. Pulled ${r['pulled']}, pushed ${push['pushed']}.'
+            : 'Mind sync failed, sir.';
+        _enqueueSpeech(msg, SpeechPriority.system);
+      });
+      return 'Synchronising mind, sir.';
+    }
+    if (stripped == 'private mode' ||
+        stripped == 'enable private mode' ||
+        stripped == 'privacy mode on') {
+      _privateMode = true;
+      _prefs?.setBool(kPrefPrivateMode, true);
+      return 'Private mode engaged, sir. Logs and retention are reduced.';
+    }
+    if (stripped == 'disable private mode' ||
+        stripped == 'private mode off' ||
+        stripped == 'exit private mode') {
+      _privateMode = false;
+      _prefs?.setBool(kPrefPrivateMode, false);
+      return 'Private mode disengaged, sir.';
+    }
+    if (stripped == 'incident mode' ||
+        stripped == 'enable incident mode' ||
+        stripped == 'crisis mode') {
+      _incidentMode = true;
+      _prefs?.setBool(kPrefIncidentMode, true);
+      return 'Incident mode engaged. I will prioritise alerts and keep updates concise, sir.';
+    }
+    if (stripped == 'cancel incident mode' ||
+        stripped == 'incident mode off' ||
+        stripped == 'end incident') {
+      _incidentMode = false;
+      _prefs?.setBool(kPrefIncidentMode, false);
+      return 'Incident mode cleared, sir.';
+    }
     if (stripped.contains('make me a sandwich') || stripped.contains('make a sandwich')) {
       return 'I would, sir, but I am afraid I lack a chassis with arms. Shall I find a delivery option instead?';
     }
@@ -2991,7 +3781,7 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
     if (_isListening) return kJarvisRed;
     if (_isSpeaking) return kJarvisAmber;
     if (_isProcessing) return kJarvisBlue;
-    return kJarvisCyan;
+    return _themeCyan;
   }
 
   // -----------------------------------------------------------------------
@@ -3738,7 +4528,15 @@ class _SettingsScreenState extends State<_SettingsScreen> {
       _webhookController,
       _braveKeyController,
       _githubTokenController,
-      _githubRepoController;
+      _githubRepoController,
+      _elevenKeyController,
+      _elevenVoiceController,
+      _mysqlHostController,
+      _mysqlPortController,
+      _mysqlUserController,
+      _mysqlDbController,
+      _mysqlPassController,
+      _mysqlOwnerController;
   static const kVoices = ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'];
 
   @override
@@ -3746,6 +4544,29 @@ class _SettingsScreenState extends State<_SettingsScreen> {
     super.initState();
     _voice = widget.voice;
     _ttsMode = widget.ttsMode;
+    _elevenKeyController = TextEditingController();
+    _mysqlHostController = TextEditingController(
+        text: widget.prefs?.getString(kPrefMysqlHost) ?? '');
+    _mysqlPortController = TextEditingController(
+        text: '${widget.prefs?.getInt(kPrefMysqlPort) ?? 3306}');
+    _mysqlUserController = TextEditingController(
+        text: widget.prefs?.getString(kPrefMysqlUser) ?? '');
+    _mysqlDbController = TextEditingController(
+        text: widget.prefs?.getString(kPrefMysqlDb) ?? 'jarvis_mind');
+    _mysqlOwnerController = TextEditingController(
+        text: widget.prefs?.getString(kPrefMysqlOwner) ?? 'default');
+    _mysqlPassController = TextEditingController();
+    widget.storage.read(key: kMysqlPassKey).then((v) {
+      if (v != null && mounted) {
+        setState(() => _mysqlPassController.text = v);
+      }
+    });
+    _elevenVoiceController = TextEditingController(text: kDefaultElevenVoice);
+    widget.storage.read(key: kPrefElevenKey).then((v) {
+      if (v != null && mounted) setState(() => _elevenKeyController.text = v);
+    });
+    final ev = widget.prefs?.getString(kPrefElevenVoice);
+    if (ev != null) _elevenVoiceController.text = ev;
     _rate = widget.rate;
     _continuous = widget.continuous;
     _toolsEnabled = widget.toolsEnabled;
@@ -3917,21 +4738,89 @@ class _SettingsScreenState extends State<_SettingsScreen> {
         children: [
           _section('Voice'),
           _holoTile(
-            child: SwitchListTile(
-              value: _ttsMode == 'openai',
-              activeColor: kJarvisCyan,
-              title: const Text('OpenAI Neural Voice',
+            child: ListTile(
+              title: const Text('Voice Engine',
                   style: TextStyle(color: Colors.white, fontSize: 13.5)),
               subtitle: Text(
-                _ttsMode == 'openai' ? 'High quality cloud TTS' : 'On-device TTS',
+                _ttsMode == 'elevenlabs'
+                    ? 'ElevenLabs (film-style British)'
+                    : _ttsMode == 'openai'
+                        ? 'OpenAI neural TTS'
+                        : 'On-device TTS',
                 style: TextStyle(color: Colors.white.withOpacity(0.38), fontSize: 11.5),
               ),
-              onChanged: (v) {
-                setState(() => _ttsMode = v ? 'openai' : 'device');
-                widget.prefs?.setString(kPrefTtsMode, _ttsMode);
-              },
+              trailing: DropdownButton<String>(
+                dropdownColor: const Color(0xFF0A1620),
+                value: ['openai', 'device', 'elevenlabs'].contains(_ttsMode)
+                    ? _ttsMode
+                    : 'openai',
+                style: const TextStyle(color: kJarvisCyan, fontSize: 13),
+                items: const [
+                  DropdownMenuItem(value: 'openai', child: Text('OpenAI')),
+                  DropdownMenuItem(value: 'elevenlabs', child: Text('ElevenLabs')),
+                  DropdownMenuItem(value: 'device', child: Text('Device')),
+                ],
+                onChanged: (v) {
+                  if (v == null) return;
+                  setState(() => _ttsMode = v);
+                  widget.prefs?.setString(kPrefTtsMode, _ttsMode);
+                },
+              ),
             ),
           ),
+          if (_ttsMode == 'elevenlabs') ...[
+            _holoTile(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('ElevenLabs API key',
+                        style: TextStyle(
+                            color: Colors.white.withOpacity(0.5), fontSize: 11)),
+                    TextField(
+                      controller: _elevenKeyController,
+                      obscureText: true,
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        border: InputBorder.none,
+                        hintText: 'xi-...',
+                        hintStyle: TextStyle(color: Colors.white24),
+                      ),
+                      onChanged: (v) {
+                        if (v.trim().isEmpty) {
+                          widget.storage.delete(key: kPrefElevenKey);
+                        } else {
+                          widget.storage.write(
+                              key: kPrefElevenKey, value: v.trim());
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    Text('Voice ID',
+                        style: TextStyle(
+                            color: Colors.white.withOpacity(0.5), fontSize: 11)),
+                    TextField(
+                      controller: _elevenVoiceController,
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        border: InputBorder.none,
+                        hintText: 'Voice ID from ElevenLabs',
+                        hintStyle: TextStyle(color: Colors.white24),
+                      ),
+                      onChanged: (v) {
+                        widget.prefs?.setString(
+                            kPrefElevenVoice,
+                            v.trim().isEmpty ? kDefaultElevenVoice : v.trim());
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
           if (_ttsMode == 'openai')
             _holoTile(
               child: Padding(
@@ -3957,7 +4846,135 @@ class _SettingsScreenState extends State<_SettingsScreen> {
 
           _section('Behaviour'),
           _holoTile(
-            child: SwitchListTile(
+            child: _holoTile(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('MYSQL MIND',
+                        style: TextStyle(
+                            color: kJarvisCyan,
+                            fontSize: 11,
+                            letterSpacing: 2)),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: _mysqlHostController,
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        border: InputBorder.none,
+                        labelText: 'Host',
+                        labelStyle: TextStyle(color: Colors.white38),
+                      ),
+                      onChanged: (v) =>
+                          widget.prefs?.setString(kPrefMysqlHost, v.trim()),
+                    ),
+                    TextField(
+                      controller: _mysqlPortController,
+                      keyboardType: TextInputType.number,
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        border: InputBorder.none,
+                        labelText: 'Port',
+                        labelStyle: TextStyle(color: Colors.white38),
+                      ),
+                      onChanged: (v) => widget.prefs?.setInt(
+                          kPrefMysqlPort, int.tryParse(v) ?? 3306),
+                    ),
+                    TextField(
+                      controller: _mysqlUserController,
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        border: InputBorder.none,
+                        labelText: 'User',
+                        labelStyle: TextStyle(color: Colors.white38),
+                      ),
+                      onChanged: (v) =>
+                          widget.prefs?.setString(kPrefMysqlUser, v.trim()),
+                    ),
+                    TextField(
+                      controller: _mysqlPassController,
+                      obscureText: true,
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        border: InputBorder.none,
+                        labelText: 'Password',
+                        labelStyle: TextStyle(color: Colors.white38),
+                      ),
+                      onChanged: (v) {
+                        if (v.isEmpty) {
+                          widget.storage.delete(key: kMysqlPassKey);
+                        } else {
+                          widget.storage
+                              .write(key: kMysqlPassKey, value: v);
+                        }
+                      },
+                    ),
+                    TextField(
+                      controller: _mysqlDbController,
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        border: InputBorder.none,
+                        labelText: 'Database',
+                        labelStyle: TextStyle(color: Colors.white38),
+                      ),
+                      onChanged: (v) => widget.prefs
+                          ?.setString(kPrefMysqlDb, v.trim().isEmpty ? 'jarvis_mind' : v.trim()),
+                    ),
+                    TextField(
+                      controller: _mysqlOwnerController,
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        border: InputBorder.none,
+                        labelText: 'Owner key',
+                        labelStyle: TextStyle(color: Colors.white38),
+                      ),
+                      onChanged: (v) => widget.prefs?.setString(
+                          kPrefMysqlOwner,
+                          v.trim().isEmpty ? 'default' : v.trim()),
+                    ),
+                    Text(
+                      'Auto-creates database & tables on first connect. User needs CREATE privilege. LAN/VPN only.',
+                      style: TextStyle(
+                          color: Colors.white.withOpacity(0.35), fontSize: 10.5),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            SwitchListTile(
+              value: widget.prefs?.getBool(kPrefMorningBrief) ?? true,
+              activeColor: kJarvisCyan,
+              title: const Text('Morning briefing',
+                  style: TextStyle(color: Colors.white, fontSize: 13.5)),
+              subtitle: Text('~08:00 daily systems + weather',
+                  style: TextStyle(
+                      color: Colors.white.withOpacity(0.38), fontSize: 11.5)),
+              onChanged: (v) {
+                widget.prefs?.setBool(kPrefMorningBrief, v);
+                setState(() {});
+              },
+            ),
+            SwitchListTile(
+              value: widget.prefs?.getBool(kPrefPrivateMode) ?? false,
+              activeColor: kJarvisCyan,
+              title: const Text('Private mode',
+                  style: TextStyle(color: Colors.white, fontSize: 13.5)),
+              subtitle: Text('Reduce chat logging',
+                  style: TextStyle(
+                      color: Colors.white.withOpacity(0.38), fontSize: 11.5)),
+              onChanged: (v) {
+                widget.prefs?.setBool(kPrefPrivateMode, v);
+                setState(() {});
+              },
+            ),
+            SwitchListTile(
               value: _continuous,
               activeColor: kJarvisCyan,
               title: const Text('Hands-free Mode',
