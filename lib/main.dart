@@ -29,6 +29,9 @@ const String kEmailUserKey = 'email_user';
 const String kEmailPassKey = 'email_app_password';
 const String kRestartWebhookKey = 'fivem_restart_webhook';
 const String kBraveApiKeyKey = 'brave_api_key';
+const String kPteroApiKeyKey = 'ptero_api_key';
+const String kPrefPteroBase = 'pref_ptero_base';
+const String kPrefPteroServer = 'pref_ptero_server_id';
 const String kGithubTokenKey = 'github_token';
 const String kGithubRepoKey = 'github_repo';
 const String kPrefGithubRepo = 'pref_github_repo';
@@ -557,6 +560,67 @@ const List<Map<String, dynamic>> kBuiltinToolSchema = [
     }
   },
 
+
+  {
+    'type': 'function',
+    'function': {
+      'name': 'ptero_status',
+      'description': 'Get Pterodactyl game server power state and resource usage (CPU, memory, disk).',
+      'parameters': {'type': 'object', 'properties': {}},
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'ptero_power',
+      'description': 'Send power signal to the configured Pterodactyl server: start, stop, restart, or kill.',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'signal': {
+            'type': 'string',
+            'description': 'start | stop | restart | kill',
+          },
+        },
+        'required': ['signal'],
+      },
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'ptero_command',
+      'description': 'Send a console command to the Pterodactyl server (e.g. say Hello, ensure mapmanager).',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'command': {'type': 'string'},
+        },
+        'required': ['command'],
+      },
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'ptero_backup',
+      'description': 'Create a backup of the Pterodactyl server.',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'name': {'type': 'string'},
+        },
+      },
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'ptero_list_backups',
+      'description': 'List backups for the configured Pterodactyl server.',
+      'parameters': {'type': 'object', 'properties': {}},
+    }
+  },
   {
     'type': 'function',
     'function': {
@@ -1225,6 +1289,9 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
   String _mysqlOwner = 'default';
   String? _mysqlPass;
   bool _mindOnline = false;
+  String _pteroBase = '';
+  String _pteroServerId = '';
+  String? _pteroApiKey;
   double _deviceRate = kDefaultDeviceRate;
   String _systemPromptExtra = '';
 
@@ -1518,6 +1585,9 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
     _mysqlDb = p.getString(kPrefMysqlDb) ?? 'jarvis_mind';
     _mysqlOwner = p.getString(kPrefMysqlOwner) ?? 'default';
     _mysqlPass = await _storage.read(key: kMysqlPassKey);
+    _pteroBase = p.getString(kPrefPteroBase) ?? '';
+    _pteroServerId = p.getString(kPrefPteroServer) ?? '';
+    _pteroApiKey = await _storage.read(key: kPteroApiKeyKey);
     try {
       final raw = p.getString(kPrefReminders);
       if (raw != null && raw.isNotEmpty) {
@@ -2715,6 +2785,26 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
         }
 
 
+      
+      case 'ptero_status':
+        _note('Checking Pterodactyl');
+        return jsonEncode(await _pteroStatus());
+      case 'ptero_power':
+        final sig = (args['signal'] ?? '').toString();
+        _note('Power: $sig');
+        return jsonEncode(await _pteroPower(sig));
+      case 'ptero_command':
+        final cmd = (args['command'] ?? '').toString();
+        _note('Console command');
+        return jsonEncode(await _pteroCommand(cmd));
+      case 'ptero_backup':
+        final n = args['name']?.toString();
+        _note('Creating backup');
+        return jsonEncode(await _pteroBackup(name: n));
+      case 'ptero_list_backups':
+        _note('Listing backups');
+        return jsonEncode(await _pteroListBackups());
+
       case 'set_reminder':
         final mins = (args['minutes'] is num)
             ? (args['minutes'] as num).toDouble()
@@ -2863,6 +2953,8 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
         'When a task completes successfully, a brief "Done, sir." or "Check." is better than a long recap.');
     b.writeln(
         'Reminders: set_reminder, list_reminders, cancel_reminders. Briefings: deliver_briefing. Modes: set_private_mode, set_incident_mode. HUD: set_hud_theme (classic|mark1|stark).');
+    b.writeln(
+        'Pterodactyl (one configured game server): ptero_status, ptero_power (start|stop|restart|kill), ptero_command, ptero_backup, ptero_list_backups. Confirm before kill or stop if players may be online.');
     b.writeln('Be concise unless the user asks for detail.');
     if (_systemPromptExtra.isNotEmpty) {
       b.writeln('\nExtra instructions:\n$_systemPromptExtra');
@@ -2906,6 +2998,180 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
     if (r['ok'] == true) {
       await _mindPull();
       if (mounted) setState(() {});
+    }
+  }
+
+
+  bool get _pteroConfigured =>
+      _pteroBase.trim().isNotEmpty &&
+      _pteroServerId.trim().isNotEmpty &&
+      _pteroApiKey != null &&
+      _pteroApiKey!.trim().isNotEmpty;
+
+  String get _pteroApiRoot {
+    var b = _pteroBase.trim();
+    if (b.endsWith('/')) b = b.substring(0, b.length - 1);
+    return b;
+  }
+
+  Future<http.Response> _pteroRequest(
+    String method,
+    String path, {
+    Map<String, dynamic>? body,
+  }) async {
+    final uri = Uri.parse('$_pteroApiRoot$path');
+    final headers = {
+      'Authorization': 'Bearer ${_pteroApiKey!.trim()}',
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+    };
+    if (method == 'GET') {
+      return http.get(uri, headers: headers).timeout(const Duration(seconds: 20));
+    }
+    if (method == 'POST') {
+      return http
+          .post(uri,
+              headers: headers,
+              body: body == null ? null : jsonEncode(body))
+          .timeout(const Duration(seconds: 60));
+    }
+    throw Exception('Unsupported method $method');
+  }
+
+  Future<Map<String, dynamic>> _pteroStatus() async {
+    if (!_pteroConfigured) {
+      return {'ok': false, 'error': 'Pterodactyl not configured'};
+    }
+    try {
+      final res = await _pteroRequest(
+        'GET',
+        '/api/client/servers/$_pteroServerId/resources',
+      );
+      if (res.statusCode != 200) {
+        return {
+          'ok': false,
+          'statusCode': res.statusCode,
+          'error': res.body.length > 400 ? res.body.substring(0, 400) : res.body,
+        };
+      }
+      final data = jsonDecode(res.body);
+      final attrs = data is Map ? data['attributes'] : null;
+      if (attrs is! Map) return {'ok': false, 'error': 'Unexpected response'};
+      return {
+        'ok': true,
+        'current_state': attrs['current_state'],
+        'is_suspended': attrs['is_suspended'],
+        'resources': attrs['resources'],
+        'server_id': _pteroServerId,
+      };
+    } catch (e) {
+      return {'ok': false, 'error': e.toString()};
+    }
+  }
+
+  Future<Map<String, dynamic>> _pteroPower(String signal) async {
+    if (!_pteroConfigured) {
+      return {'ok': false, 'error': 'Pterodactyl not configured'};
+    }
+    final allowed = {'start', 'stop', 'restart', 'kill'};
+    final sig = signal.toLowerCase().trim();
+    if (!allowed.contains(sig)) {
+      return {'ok': false, 'error': 'signal must be start|stop|restart|kill'};
+    }
+    try {
+      final res = await _pteroRequest(
+        'POST',
+        '/api/client/servers/$_pteroServerId/power',
+        body: {'signal': sig},
+      );
+      // 204 No Content is success for power
+      if (res.statusCode == 204 || res.statusCode == 200) {
+        return {'ok': true, 'signal': sig};
+      }
+      return {
+        'ok': false,
+        'statusCode': res.statusCode,
+        'error': res.body.length > 400 ? res.body.substring(0, 400) : res.body,
+      };
+    } catch (e) {
+      return {'ok': false, 'error': e.toString()};
+    }
+  }
+
+  Future<Map<String, dynamic>> _pteroCommand(String command) async {
+    if (!_pteroConfigured) {
+      return {'ok': false, 'error': 'Pterodactyl not configured'};
+    }
+    final cmd = command.trim();
+    if (cmd.isEmpty) return {'ok': false, 'error': 'command required'};
+    try {
+      final res = await _pteroRequest(
+        'POST',
+        '/api/client/servers/$_pteroServerId/command',
+        body: {'command': cmd},
+      );
+      if (res.statusCode == 204 || res.statusCode == 200) {
+        return {'ok': true, 'command': cmd};
+      }
+      return {
+        'ok': false,
+        'statusCode': res.statusCode,
+        'error': res.body.length > 400 ? res.body.substring(0, 400) : res.body,
+      };
+    } catch (e) {
+      return {'ok': false, 'error': e.toString()};
+    }
+  }
+
+  Future<Map<String, dynamic>> _pteroBackup({String? name}) async {
+    if (!_pteroConfigured) {
+      return {'ok': false, 'error': 'Pterodactyl not configured'};
+    }
+    try {
+      final body = <String, dynamic>{
+        'name': (name == null || name.trim().isEmpty)
+            ? 'jarvis-${DateTime.now().toIso8601String()}'
+            : name.trim(),
+      };
+      final res = await _pteroRequest(
+        'POST',
+        '/api/client/servers/$_pteroServerId/backups',
+        body: body,
+      );
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        final data = jsonDecode(res.body);
+        return {'ok': true, 'backup': data};
+      }
+      return {
+        'ok': false,
+        'statusCode': res.statusCode,
+        'error': res.body.length > 400 ? res.body.substring(0, 400) : res.body,
+      };
+    } catch (e) {
+      return {'ok': false, 'error': e.toString()};
+    }
+  }
+
+  Future<Map<String, dynamic>> _pteroListBackups() async {
+    if (!_pteroConfigured) {
+      return {'ok': false, 'error': 'Pterodactyl not configured'};
+    }
+    try {
+      final res = await _pteroRequest(
+        'GET',
+        '/api/client/servers/$_pteroServerId/backups',
+      );
+      if (res.statusCode != 200) {
+        return {
+          'ok': false,
+          'statusCode': res.statusCode,
+          'error': res.body.length > 400 ? res.body.substring(0, 400) : res.body,
+        };
+      }
+      final data = jsonDecode(res.body);
+      return {'ok': true, 'backups': data};
+    } catch (e) {
+      return {'ok': false, 'error': e.toString()};
     }
   }
 
@@ -3430,6 +3696,18 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
       return 'Preparing briefing, sir.';
     }
 
+    if (stripped == 'ptero status' ||
+        stripped == 'server status' ||
+        stripped == 'game server status') {
+      _pteroStatus().then((s) {
+        final msg = s['ok'] == true
+            ? 'Pterodactyl reports state ${s['current_state']}, sir.'
+            : 'I could not reach Pterodactyl, sir.';
+        _enqueueSpeech(msg, SpeechPriority.system);
+        if (!_privateMode) _addLog('assistant', msg);
+      });
+      return 'Checking the game server, sir.';
+    }
     if (stripped == 'mind status' || stripped == 'check mind') {
       _mindStatus().then((s) {
         final online = s['online'] == true;
@@ -4570,7 +4848,10 @@ class _SettingsScreenState extends State<_SettingsScreen> {
       _mysqlUserController,
       _mysqlDbController,
       _mysqlPassController,
-      _mysqlOwnerController;
+      _mysqlOwnerController,
+      _pteroBaseController,
+      _pteroServerController,
+      _pteroKeyController;
   static const kVoices = ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'];
 
   @override
@@ -4590,6 +4871,16 @@ class _SettingsScreenState extends State<_SettingsScreen> {
     _mysqlOwnerController = TextEditingController(
         text: widget.prefs?.getString(kPrefMysqlOwner) ?? 'default');
     _mysqlPassController = TextEditingController();
+    _pteroBaseController = TextEditingController(
+        text: widget.prefs?.getString(kPrefPteroBase) ?? '');
+    _pteroServerController = TextEditingController(
+        text: widget.prefs?.getString(kPrefPteroServer) ?? '');
+    _pteroKeyController = TextEditingController();
+    widget.storage.read(key: kPteroApiKeyKey).then((v) {
+      if (v != null && mounted) {
+        setState(() => _pteroKeyController.text = v);
+      }
+    });
     widget.storage.read(key: kMysqlPassKey).then((v) {
       if (v != null && mounted) {
         setState(() => _mysqlPassController.text = v);
@@ -4983,6 +5274,77 @@ class _SettingsScreenState extends State<_SettingsScreen> {
                       color: Colors.white.withOpacity(0.35),
                       fontSize: 10.5,
                     ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          _holoTile(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'PTERODACTYL',
+                    style: TextStyle(
+                      color: kJarvisCyan,
+                      fontSize: 11,
+                      letterSpacing: 2,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Client API · one server',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.35),
+                      fontSize: 10.5,
+                    ),
+                  ),
+                  TextField(
+                    controller: _pteroBaseController,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: InputBorder.none,
+                      labelText: 'Panel URL',
+                      hintText: 'https://panel.example.com',
+                      labelStyle: TextStyle(color: Colors.white38),
+                      hintStyle: TextStyle(color: Colors.white24),
+                    ),
+                    onChanged: (v) =>
+                        widget.prefs?.setString(kPrefPteroBase, v.trim()),
+                  ),
+                  TextField(
+                    controller: _pteroServerController,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: InputBorder.none,
+                      labelText: 'Server ID / UUID',
+                      labelStyle: TextStyle(color: Colors.white38),
+                    ),
+                    onChanged: (v) =>
+                        widget.prefs?.setString(kPrefPteroServer, v.trim()),
+                  ),
+                  TextField(
+                    controller: _pteroKeyController,
+                    obscureText: true,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: InputBorder.none,
+                      labelText: 'Client API key',
+                      labelStyle: TextStyle(color: Colors.white38),
+                    ),
+                    onChanged: (v) {
+                      if (v.trim().isEmpty) {
+                        widget.storage.delete(key: kPteroApiKeyKey);
+                      } else {
+                        widget.storage
+                            .write(key: kPteroApiKeyKey, value: v.trim());
+                      }
+                    },
                   ),
                 ],
               ),
