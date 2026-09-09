@@ -30,6 +30,9 @@ const String kEmailPassKey = 'email_app_password';
 const String kRestartWebhookKey = 'fivem_restart_webhook';
 const String kBraveApiKeyKey = 'brave_api_key';
 const String kPteroApiKeyKey = 'ptero_api_key';
+const String kPrefTxUrl = 'pref_txadmin_url';
+const String kPrefTxUser = 'pref_txadmin_user';
+const String kTxPassKey = 'txadmin_password';
 const String kPrefPteroBase = 'pref_ptero_base';
 const String kPrefPteroServer = 'pref_ptero_server_id';
 const String kGithubTokenKey = 'github_token';
@@ -561,6 +564,66 @@ const List<Map<String, dynamic>> kBuiltinToolSchema = [
   },
 
 
+
+  {
+    'type': 'function',
+    'function': {
+      'name': 'tx_login_test',
+      'description': 'Test login to txAdmin panel with configured credentials.',
+      'parameters': {'type': 'object', 'properties': {}},
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'tx_resource',
+      'description': 'Control a FiveM resource via txAdmin: restart, start, stop, or ensure.',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'action': {'type': 'string', 'description': 'restart | start | stop | ensure'},
+          'resource': {'type': 'string', 'description': 'Resource name e.g. qb-core'},
+        },
+        'required': ['action', 'resource'],
+      },
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'tx_server',
+      'description': 'Control FXServer via txAdmin: restart, stop, or start the whole server.',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'action': {'type': 'string', 'description': 'restart | stop | start'},
+        },
+        'required': ['action'],
+      },
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'tx_announce',
+      'description': 'Send a txAdmin announcement to all players.',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'message': {'type': 'string'},
+        },
+        'required': ['message'],
+      },
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'tx_refresh',
+      'description': 'Run refresh on FXServer resources via txAdmin.',
+      'parameters': {'type': 'object', 'properties': {}},
+    }
+  },
   {
     'type': 'function',
     'function': {
@@ -1292,6 +1355,12 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
   String _pteroBase = '';
   String _pteroServerId = '';
   String? _pteroApiKey;
+  String _txUrl = 'http://82.38.2.77:40120';
+  String _txUser = '';
+  String? _txPass;
+  String? _txCookie;
+  String? _txCsrf;
+  DateTime? _txAuthAt;
   double _deviceRate = kDefaultDeviceRate;
   String _systemPromptExtra = '';
 
@@ -1588,6 +1657,9 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
     _pteroBase = p.getString(kPrefPteroBase) ?? '';
     _pteroServerId = p.getString(kPrefPteroServer) ?? '';
     _pteroApiKey = await _storage.read(key: kPteroApiKeyKey);
+    _txUrl = p.getString(kPrefTxUrl) ?? 'http://82.38.2.77:40120';
+    _txUser = p.getString(kPrefTxUser) ?? '';
+    _txPass = await _storage.read(key: kTxPassKey);
     try {
       final raw = p.getString(kPrefReminders);
       if (raw != null && raw.isNotEmpty) {
@@ -2786,6 +2858,27 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
 
 
       
+      
+      case 'tx_login_test':
+        _note('txAdmin login');
+        return jsonEncode(await _txLogin(force: true));
+      case 'tx_resource':
+        final a = (args['action'] ?? 'restart').toString();
+        final r = (args['resource'] ?? '').toString();
+        _note('txAdmin resource $a');
+        return jsonEncode(await _txResourceAction(a, r));
+      case 'tx_server':
+        final a = (args['action'] ?? 'restart').toString();
+        _note('txAdmin server $a');
+        return jsonEncode(await _txServerControl(a));
+      case 'tx_announce':
+        final m = (args['message'] ?? '').toString();
+        _note('txAdmin announce');
+        return jsonEncode(await _txAnnounce(m));
+      case 'tx_refresh':
+        _note('txAdmin refresh');
+        return jsonEncode(await _txRefreshResources());
+
       case 'ptero_status':
         _note('Checking Pterodactyl');
         return jsonEncode(await _pteroStatus());
@@ -2955,6 +3048,8 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
         'Reminders: set_reminder, list_reminders, cancel_reminders. Briefings: deliver_briefing. Modes: set_private_mode, set_incident_mode. HUD: set_hud_theme (classic|mark1|stark).');
     b.writeln(
         'Pterodactyl (one configured game server): ptero_status, ptero_power (start|stop|restart|kill), ptero_command, ptero_backup, ptero_list_backups. Confirm before kill or stop if players may be online.');
+    b.writeln(
+        'txAdmin panel (configured URL): tx_login_test, tx_resource (restart|start|stop|ensure + resource name), tx_server (restart|stop|start whole FXServer), tx_announce, tx_refresh. Confirm before full server restart or stop.');
     b.writeln('Be concise unless the user asks for detail.');
     if (_systemPromptExtra.isNotEmpty) {
       b.writeln('\nExtra instructions:\n$_systemPromptExtra');
@@ -3001,6 +3096,226 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
     }
   }
 
+
+
+  bool get _txConfigured =>
+      _txUrl.trim().isNotEmpty &&
+      _txUser.trim().isNotEmpty &&
+      _txPass != null &&
+      _txPass!.trim().isNotEmpty;
+
+  String get _txRoot {
+    var u = _txUrl.trim();
+    if (u.endsWith('/')) u = u.substring(0, u.length - 1);
+    return u;
+  }
+
+  String? _parseCookie(http.Response res) {
+    // Prefer set-cookie header(s)
+    final raw = res.headers['set-cookie'] ?? res.headers['Set-Cookie'];
+    if (raw == null || raw.isEmpty) return null;
+    // Keep name=value pairs only (drop Path/HttpOnly attributes segments carefully)
+    final parts = raw.split(',');
+    final cookies = <String>[];
+    for (final part in parts) {
+      final bit = part.split(';').first.trim();
+      if (bit.contains('=')) cookies.add(bit);
+    }
+    if (cookies.isEmpty) return null;
+    return cookies.join('; ');
+  }
+
+  Future<Map<String, dynamic>> _txLogin({bool force = false}) async {
+    if (!_txConfigured) {
+      return {'ok': false, 'error': 'txAdmin not configured'};
+    }
+    if (!force &&
+        _txCookie != null &&
+        _txCsrf != null &&
+        _txAuthAt != null &&
+        DateTime.now().difference(_txAuthAt!) < const Duration(minutes: 25)) {
+      return {'ok': true, 'cached': true};
+    }
+    try {
+      final res = await http
+          .post(
+            Uri.parse('$_txRoot/auth/password'),
+            headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+            body: jsonEncode({
+              'username': _txUser.trim(),
+              'password': _txPass!.trim(),
+            }),
+          )
+          .timeout(const Duration(seconds: 20));
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        return {
+          'ok': false,
+          'statusCode': res.statusCode,
+          'error': res.body.length > 300 ? res.body.substring(0, 300) : res.body,
+        };
+      }
+      final cookie = _parseCookie(res);
+      String? csrf;
+      try {
+        final data = jsonDecode(res.body);
+        if (data is Map) {
+          csrf = data['csrfToken']?.toString() ?? data['csrf']?.toString();
+        }
+      } catch (_) {}
+      if (cookie == null || csrf == null || csrf.isEmpty) {
+        return {
+          'ok': false,
+          'error': 'Login ok but missing cookie or CSRF token',
+          'body': res.body.length > 200 ? res.body.substring(0, 200) : res.body,
+        };
+      }
+      _txCookie = cookie;
+      _txCsrf = csrf;
+      _txAuthAt = DateTime.now();
+      return {'ok': true, 'cached': false};
+    } catch (e) {
+      return {'ok': false, 'error': e.toString()};
+    }
+  }
+
+  Future<http.Response> _txRequest(
+    String method,
+    String path, {
+    Map<String, dynamic>? body,
+  }) async {
+    final auth = await _txLogin();
+    if (auth['ok'] != true) {
+      throw Exception(auth['error'] ?? 'txAdmin auth failed');
+    }
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'Cookie': _txCookie!,
+      'X-TxAdmin-CsrfToken': _txCsrf!,
+      'x-txadmin-csrftoken': _txCsrf!,
+    };
+    final uri = Uri.parse('$_txRoot$path');
+    if (method == 'GET') {
+      return http.get(uri, headers: headers).timeout(const Duration(seconds: 25));
+    }
+    final res = await http
+        .post(uri, headers: headers, body: body == null ? null : jsonEncode(body))
+        .timeout(const Duration(seconds: 45));
+    // Re-auth once on logout-style response
+    if (res.statusCode == 401 || res.body.contains('"logout"')) {
+      final again = await _txLogin(force: true);
+      if (again['ok'] == true) {
+        headers['Cookie'] = _txCookie!;
+        headers['X-TxAdmin-CsrfToken'] = _txCsrf!;
+        headers['x-txadmin-csrftoken'] = _txCsrf!;
+        return http
+            .post(uri, headers: headers, body: body == null ? null : jsonEncode(body))
+            .timeout(const Duration(seconds: 45));
+      }
+    }
+    return res;
+  }
+
+  Future<Map<String, dynamic>> _txResourceAction(String action, String resource) async {
+    final name = resource.trim();
+    if (name.isEmpty) return {'ok': false, 'error': 'resource name required'};
+    final allowed = {
+      'restart': 'restart_res',
+      'start': 'start_res',
+      'stop': 'stop_res',
+      'ensure': 'ensure_res',
+      'restart_res': 'restart_res',
+      'start_res': 'start_res',
+      'stop_res': 'stop_res',
+      'ensure_res': 'ensure_res',
+    };
+    final act = allowed[action.toLowerCase().trim()];
+    if (act == null) {
+      return {'ok': false, 'error': 'action must be restart|start|stop|ensure'};
+    }
+    try {
+      final res = await _txRequest(
+        'POST',
+        '/fxserver/commands',
+        body: {'action': act, 'parameter': name},
+      );
+      return {
+        'ok': res.statusCode >= 200 && res.statusCode < 300,
+        'statusCode': res.statusCode,
+        'action': act,
+        'resource': name,
+        'response': _txSoftBody(res.body),
+      };
+    } catch (e) {
+      return {'ok': false, 'error': e.toString()};
+    }
+  }
+
+  Future<Map<String, dynamic>> _txServerControl(String action) async {
+    final act = action.toLowerCase().trim();
+    if (!{'restart', 'stop', 'start'}.contains(act)) {
+      return {'ok': false, 'error': 'action must be restart|stop|start'};
+    }
+    try {
+      final res = await _txRequest(
+        'POST',
+        '/fxserver/controls',
+        body: {'action': act},
+      );
+      return {
+        'ok': res.statusCode >= 200 && res.statusCode < 300,
+        'statusCode': res.statusCode,
+        'action': act,
+        'response': _txSoftBody(res.body),
+      };
+    } catch (e) {
+      return {'ok': false, 'error': e.toString()};
+    }
+  }
+
+  Future<Map<String, dynamic>> _txAnnounce(String message) async {
+    final msg = message.trim();
+    if (msg.isEmpty) return {'ok': false, 'error': 'message required'};
+    try {
+      final res = await _txRequest(
+        'POST',
+        '/fxserver/commands',
+        body: {'action': 'admin_broadcast', 'parameter': msg},
+      );
+      return {
+        'ok': res.statusCode >= 200 && res.statusCode < 300,
+        'statusCode': res.statusCode,
+        'response': _txSoftBody(res.body),
+      };
+    } catch (e) {
+      return {'ok': false, 'error': e.toString()};
+    }
+  }
+
+  Future<Map<String, dynamic>> _txRefreshResources() async {
+    try {
+      final res = await _txRequest(
+        'POST',
+        '/fxserver/commands',
+        body: {'action': 'refresh_res', 'parameter': ''},
+      );
+      return {
+        'ok': res.statusCode >= 200 && res.statusCode < 300,
+        'statusCode': res.statusCode,
+        'response': _txSoftBody(res.body),
+      };
+    } catch (e) {
+      return {'ok': false, 'error': e.toString()};
+    }
+  }
+
+  dynamic _txSoftBody(String body) {
+    try {
+      return jsonDecode(body);
+    } catch (_) {
+      return body.length > 400 ? body.substring(0, 400) : body;
+    }
+  }
 
   bool get _pteroConfigured =>
       _pteroBase.trim().isNotEmpty &&
@@ -4851,7 +5166,10 @@ class _SettingsScreenState extends State<_SettingsScreen> {
       _mysqlOwnerController,
       _pteroBaseController,
       _pteroServerController,
-      _pteroKeyController;
+      _pteroKeyController,
+      _txUrlController,
+      _txUserController,
+      _txPassController;
   static const kVoices = ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'];
 
   @override
@@ -4876,6 +5194,14 @@ class _SettingsScreenState extends State<_SettingsScreen> {
     _pteroServerController = TextEditingController(
         text: widget.prefs?.getString(kPrefPteroServer) ?? '');
     _pteroKeyController = TextEditingController();
+    _txUrlController = TextEditingController(
+        text: widget.prefs?.getString(kPrefTxUrl) ?? 'http://82.38.2.77:40120');
+    _txUserController = TextEditingController(
+        text: widget.prefs?.getString(kPrefTxUser) ?? '');
+    _txPassController = TextEditingController();
+    widget.storage.read(key: kTxPassKey).then((v) {
+      if (v != null && mounted) setState(() => _txPassController.text = v);
+    });
     widget.storage.read(key: kPteroApiKeyKey).then((v) {
       if (v != null && mounted) {
         setState(() => _pteroKeyController.text = v);
@@ -5274,6 +5600,76 @@ class _SettingsScreenState extends State<_SettingsScreen> {
                       color: Colors.white.withOpacity(0.35),
                       fontSize: 10.5,
                     ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          _holoTile(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'TXADMIN',
+                    style: TextStyle(
+                      color: kJarvisCyan,
+                      fontSize: 11,
+                      letterSpacing: 2,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Login + resource / server control',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.35),
+                      fontSize: 10.5,
+                    ),
+                  ),
+                  TextField(
+                    controller: _txUrlController,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: InputBorder.none,
+                      labelText: 'Panel URL',
+                      hintText: 'http://82.38.2.77:40120',
+                      labelStyle: TextStyle(color: Colors.white38),
+                      hintStyle: TextStyle(color: Colors.white24),
+                    ),
+                    onChanged: (v) =>
+                        widget.prefs?.setString(kPrefTxUrl, v.trim()),
+                  ),
+                  TextField(
+                    controller: _txUserController,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: InputBorder.none,
+                      labelText: 'Username',
+                      labelStyle: TextStyle(color: Colors.white38),
+                    ),
+                    onChanged: (v) =>
+                        widget.prefs?.setString(kPrefTxUser, v.trim()),
+                  ),
+                  TextField(
+                    controller: _txPassController,
+                    obscureText: true,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: InputBorder.none,
+                      labelText: 'Password',
+                      labelStyle: TextStyle(color: Colors.white38),
+                    ),
+                    onChanged: (v) {
+                      if (v.trim().isEmpty) {
+                        widget.storage.delete(key: kTxPassKey);
+                      } else {
+                        widget.storage.write(key: kTxPassKey, value: v.trim());
+                      }
+                    },
                   ),
                 ],
               ),
