@@ -127,12 +127,12 @@ const String kDiscordAutoReplyFooter =
     '\n\n-# This dm was from emps ai assistant, emp is currently unavailable i will assist to my best efforts!';
 
 // Cinematic Iron Man palette
-const Color kJarvisCyan = Color(0xFF00E5FF);
-const Color kJarvisCyanBright = Color(0xFF7AFFFF);
+const Color kJarvisCyan = Color(0xFF00D4FF);
+const Color kJarvisCyanBright = Color(0xFF6EFFFF);
 const Color kJarvisCyanDim = Color(0xFF008B99);
 const Color kJarvisBlue = Color(0xFF0091FF);
-const Color kJarvisDark = Color(0xFF010409);
-const Color kJarvisPanel = Color(0xFF071018);
+const Color kJarvisDark = Color(0xFF02060C);
+const Color kJarvisPanel = Color(0xFF06101A);
 const Color kJarvisPanelLight = Color(0xFF0D1A28);
 const Color kJarvisBorder = Color(0x4400E5FF);
 const Color kJarvisGlow = Color(0x5500E5FF);
@@ -861,41 +861,49 @@ class HudCornersPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = color.withOpacity(0.55 * progress)
+      ..color = color.withOpacity(0.65 * progress)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.4
+      ..strokeWidth = 1.5
       ..strokeCap = StrokeCap.square;
 
-    const len = 18.0;
-    const inset = 10.0;
+    const len = 28.0;
+    const inset = 8.0;
+    final w = size.width;
+    final h = size.height;
 
-    canvas.drawLine(const Offset(inset, inset + len), const Offset(inset, inset), paint);
-    canvas.drawLine(const Offset(inset, inset), const Offset(inset + len, inset), paint);
+    void corner(double x, double y, double dx, double dy) {
+      canvas.drawLine(Offset(x, y + dy * len), Offset(x, y), paint);
+      canvas.drawLine(Offset(x, y), Offset(x + dx * len, y), paint);
+      final p2 = Paint()
+        ..color = color.withOpacity(0.25 * progress)
+        ..strokeWidth = 1.0;
+      canvas.drawLine(
+        Offset(x + dx * 3, y + dy * 3),
+        Offset(x + dx * 3, y + dy * (len - 6)),
+        p2,
+      );
+    }
 
-    canvas.drawLine(
-        Offset(size.width - inset - len, inset), Offset(size.width - inset, inset), paint);
-    canvas.drawLine(
-        Offset(size.width - inset, inset), Offset(size.width - inset, inset + len), paint);
+    corner(inset, inset, 1, 1);
+    corner(w - inset, inset, -1, 1);
+    corner(inset, h - inset, 1, -1);
+    corner(w - inset, h - inset, -1, -1);
 
-    canvas.drawLine(
-        Offset(inset, size.height - inset - len), Offset(inset, size.height - inset), paint);
-    canvas.drawLine(
-        Offset(inset, size.height - inset), Offset(inset + len, size.height - inset), paint);
-
-    canvas.drawLine(Offset(size.width - inset - len, size.height - inset),
-        Offset(size.width - inset, size.height - inset), paint);
-    canvas.drawLine(Offset(size.width - inset, size.height - inset - len),
-        Offset(size.width - inset, size.height - inset), paint);
+    final mid = Paint()
+      ..color = color.withOpacity(0.35 * progress)
+      ..strokeWidth = 1.1;
+    final mx = w / 2;
+    final my = h / 2;
+    canvas.drawLine(Offset(mx - 16, inset), Offset(mx + 16, inset), mid);
+    canvas.drawLine(Offset(mx - 16, h - inset), Offset(mx + 16, h - inset), mid);
+    canvas.drawLine(Offset(inset, my - 12), Offset(inset, my + 12), mid);
+    canvas.drawLine(Offset(w - inset, my - 12), Offset(w - inset, my + 12), mid);
   }
 
   @override
   bool shouldRepaint(covariant HudCornersPainter old) =>
       old.color != color || old.progress != progress;
 }
-
-// ---------------------------------------------------------------------------
-// GRID + SCANLINE + DIAGONAL TECH LINES
-// ---------------------------------------------------------------------------
 
 class HudBackgroundPainter extends CustomPainter {
   final double scanY;
@@ -905,62 +913,126 @@ class HudBackgroundPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final gridPaint = Paint()
-      ..color = kJarvisCyan.withOpacity(0.032)
-      ..strokeWidth = 0.55;
+    final w = size.width;
+    final h = size.height;
+    final cx = w * 0.5;
+    final cy = h * 0.42;
 
-    const step = 28.0;
-    for (double x = 0; x < size.width; x += step) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), gridPaint);
-    }
-    for (double y = 0; y < size.height; y += step) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
-    }
-
-    // Diagonal accent lines
-    final diag = Paint()
-      ..color = kJarvisCyan.withOpacity(0.025)
-      ..strokeWidth = 1.0;
-    for (double i = -size.height; i < size.width; i += 90) {
-      canvas.drawLine(Offset(i, 0), Offset(i + size.height, size.height), diag);
-    }
-
-    final glow = Paint()
+    final vig = Paint()
       ..shader = RadialGradient(
-        center: const Alignment(0, -0.15),
-        radius: 1.15,
-        colors: [
-          kJarvisCyan.withOpacity(0.055),
-          kJarvisCyan.withOpacity(0.012),
-          Colors.transparent,
-        ],
-        stops: const [0.0, 0.42, 1.0],
-      ).createShader(Rect.fromLTWH(0, 0, size.width, size.height));
-    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), glow);
+        colors: [const Color(0x00000000), const Color(0xAA01060C)],
+        stops: const [0.35, 1.0],
+      ).createShader(Rect.fromLTWH(0, 0, w, h));
+    canvas.drawRect(Rect.fromLTWH(0, 0, w, h), vig);
 
-    final scanPaint = Paint()
+    final grid = Paint()
+      ..color = kJarvisCyan.withOpacity(0.045)
+      ..strokeWidth = 0.7
+      ..style = PaintingStyle.stroke;
+    for (double x = 0; x < w; x += 28) {
+      canvas.drawLine(Offset(x, 0), Offset(x, h), grid);
+    }
+    for (double y = 0; y < h; y += 28) {
+      canvas.drawLine(Offset(0, y), Offset(w, y), grid);
+    }
+
+    final beam = Paint()
+      ..color = kJarvisCyan.withOpacity(0.06)
+      ..strokeWidth = 1.2
+      ..style = PaintingStyle.stroke;
+    canvas.drawLine(Offset(0, h * 0.15), Offset(w, h * 0.55), beam);
+    canvas.drawLine(Offset(w, h * 0.2), Offset(0, h * 0.7), beam);
+
+    final ring = Paint()..style = PaintingStyle.stroke..strokeWidth = 1.0;
+    for (int i = 1; i <= 6; i++) {
+      final r = 40.0 + i * 28.0 + (time * 8) % 12;
+      ring.color = kJarvisCyan.withOpacity(0.035 + (i % 2) * 0.02);
+      canvas.drawCircle(Offset(cx, cy), r, ring);
+    }
+
+    _drawSchematicPanel(canvas, Rect.fromLTWH(8, h * 0.18, w * 0.22, h * 0.28), time);
+    _drawSchematicPanel(
+        canvas, Rect.fromLTWH(w * 0.72, h * 0.22, w * 0.24, h * 0.26), time + 1.2);
+    _drawHexCluster(canvas, Offset(w * 0.12, h * 0.72), 10);
+    _drawHexCluster(canvas, Offset(w * 0.88, h * 0.65), 9);
+
+    final scan = Paint()
       ..shader = LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
         colors: [
-          Colors.transparent,
-          kJarvisCyan.withOpacity(0.06),
-          kJarvisCyan.withOpacity(0.11),
-          kJarvisCyan.withOpacity(0.06),
-          Colors.transparent,
+          kJarvisCyan.withOpacity(0.0),
+          kJarvisCyan.withOpacity(0.12),
+          kJarvisCyan.withOpacity(0.0),
         ],
-      ).createShader(Rect.fromLTWH(0, scanY - 36, size.width, 72));
-    canvas.drawRect(Rect.fromLTWH(0, scanY - 36, size.width, 72), scanPaint);
+      ).createShader(Rect.fromLTWH(0, scanY - 18, w, 36));
+    canvas.drawRect(Rect.fromLTWH(0, scanY - 18, w, 36), scan);
+
+    final bar = Paint()..color = kJarvisCyan.withOpacity(0.08);
+    canvas.drawRect(Rect.fromLTWH(0, 0, w, 1.5), bar);
+    canvas.drawRect(Rect.fromLTWH(0, h - 1.5, w, 1.5), bar);
+  }
+
+  void _drawSchematicPanel(Canvas canvas, Rect r, double t) {
+    final border = Paint()
+      ..color = kJarvisCyan.withOpacity(0.12)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.9;
+    canvas.drawRRect(RRect.fromRectAndRadius(r, const Radius.circular(2)), border);
+    final line = Paint()
+      ..color = kJarvisCyan.withOpacity(0.08)
+      ..strokeWidth = 0.7;
+    for (int i = 1; i < 6; i++) {
+      final y = r.top + r.height * (i / 6);
+      canvas.drawLine(Offset(r.left + 4, y), Offset(r.right - 4, y), line);
+    }
+    final path = Path();
+    final mid = r.center.dy;
+    path.moveTo(r.left + 6, mid);
+    for (double x = r.left + 6; x < r.right - 6; x += 4) {
+      final n = (x * 0.08 + t * 3) % 6.28;
+      path.lineTo(x, mid + (n < 3.14 ? 1 : -1) * (4 + (x % 11)));
+    }
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = kJarvisCyan.withOpacity(0.2)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.0,
+    );
+  }
+
+  void _drawHexCluster(Canvas canvas, Offset c, double s) {
+    final p = Paint()
+      ..color = kJarvisCyan.withOpacity(0.14)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.9;
+    for (int i = 0; i < 3; i++) {
+      final o = Offset(c.dx + i * s * 1.4, c.dy + (i % 2) * s * 0.8);
+      _hex(canvas, o, s * (0.7 + 0.1 * i), p);
+    }
+  }
+
+  void _hex(Canvas canvas, Offset c, double r, Paint p) {
+    final path = Path();
+    for (int i = 0; i < 6; i++) {
+      final a = (i * 60 - 30) * math.pi / 180.0;
+      final x = c.dx + r * math.cos(a);
+      final y = c.dy + r * math.sin(a);
+      if (i == 0) {
+        path.moveTo(x, y);
+      } else {
+        path.lineTo(x, y);
+      }
+    }
+    path.close();
+    canvas.drawPath(path, p);
   }
 
   @override
   bool shouldRepaint(covariant HudBackgroundPainter old) =>
       old.scanY != scanY || old.time != time;
 }
-
-// ---------------------------------------------------------------------------
-// WAVEFORM (listening / speaking)
-// ---------------------------------------------------------------------------
 
 class WaveformPainter extends CustomPainter {
   final double progress;
@@ -1024,114 +1096,85 @@ class ArcReactorPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height / 2);
+    final c = Offset(size.width / 2, size.height / 2);
     final radius = size.width / 2;
-    final intensity = listening || speaking ? 1.0 : (processing ? 0.88 : 0.72);
 
-    // Outer halo
-    final halo = Paint()
+    final glow = Paint()
       ..shader = RadialGradient(
         colors: [
-          coreColor.withOpacity(0.16 * intensity),
-          coreColor.withOpacity(0.04),
-          Colors.transparent,
+          coreColor.withOpacity(listening ? 0.35 : 0.22),
+          coreColor.withOpacity(0.0),
         ],
-        stops: const [0.55, 0.8, 1.0],
-      ).createShader(Rect.fromCircle(center: center, radius: radius));
-    canvas.drawCircle(center, radius, halo);
+      ).createShader(Rect.fromCircle(center: c, radius: radius * 1.15));
+    canvas.drawCircle(c, radius * 1.1, glow);
 
-    // Rings
-    final outerRing = Paint()
-      ..color = coreColor.withOpacity(0.22 + 0.14 * intensity)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.15;
-    canvas.drawCircle(center, radius * 0.96, outerRing);
-
-    final midRing = Paint()
-      ..color = coreColor.withOpacity(0.38 + 0.2 * intensity)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.7;
-    canvas.drawCircle(center, radius * 0.82, midRing);
-
-    // Tick marks
-    final tickPaint = Paint()
-      ..color = coreColor.withOpacity(0.68)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.9
-      ..strokeCap = StrokeCap.round;
-
-    const ticks = 36;
-    for (int i = 0; i < ticks; i++) {
-      final angle =
-          (i / ticks) * 2 * math.pi + progress * (listening ? 1.7 : 0.65);
-      final innerR = radius * (i.isEven ? 0.655 : 0.695);
-      final outerR = radius * 0.755;
-      final a = Offset(
-          center.dx + math.cos(angle) * innerR, center.dy + math.sin(angle) * innerR);
-      final b = Offset(
-          center.dx + math.cos(angle) * outerR, center.dy + math.sin(angle) * outerR);
-      canvas.drawLine(a, b, tickPaint);
-    }
-
-    // Energy arcs
-    if (processing || speaking || listening) {
-      final arcPaint = Paint()
-        ..color = coreColor.withOpacity(0.5)
+    for (int i = 0; i < 5; i++) {
+      final rr = radius * (0.42 + i * 0.11);
+      final spin = progress * math.pi * 2 * (i.isEven ? 1 : -1) * (0.3 + i * 0.05);
+      final ring = Paint()
+        ..color = coreColor.withOpacity(0.18 + i * 0.04)
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.0
+        ..strokeWidth = i == 0 ? 2.2 : 1.1;
+      canvas.drawCircle(c, rr, ring);
+
+      final tick = Paint()
+        ..color = coreColor.withOpacity(0.35)
+        ..strokeWidth = 1.2
         ..strokeCap = StrokeCap.round;
-      for (int i = 0; i < 3; i++) {
-        final start = progress * 2 * math.pi + i * 2.05;
-        canvas.drawArc(
-          Rect.fromCircle(center: center, radius: radius * 0.57),
-          start,
-          0.85,
-          false,
-          arcPaint,
+      for (int ti = 0; ti < 12; ti++) {
+        final a = spin + ti * (math.pi * 2 / 12);
+        final i0 = Offset(c.dx + rr * math.cos(a), c.dy + rr * math.sin(a));
+        final i1 = Offset(
+          c.dx + (rr - 4) * math.cos(a),
+          c.dy + (rr - 4) * math.sin(a),
         );
+        canvas.drawLine(i0, i1, tick);
       }
     }
 
-    // Orbital particles
-    final particlePaint = Paint()..color = coreColor.withOpacity(0.85);
-    for (int i = 0; i < 6; i++) {
-      final a = progress * 2 * math.pi * (i.isEven ? 1.0 : -0.7) + i * 1.05;
-      final r = radius * (0.48 + 0.08 * (i % 3));
-      final p = Offset(center.dx + math.cos(a) * r, center.dy + math.sin(a) * r);
-      canvas.drawCircle(p, 1.6 + (i % 2) * 0.6, particlePaint);
-    }
+    final arcPaint = Paint()
+      ..color = coreColor.withOpacity(0.75)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.5
+      ..strokeCap = StrokeCap.round;
+    final sweep = listening ? 2.2 : (speaking ? 1.6 : 1.1);
+    canvas.drawArc(
+      Rect.fromCircle(center: c, radius: radius * 0.88),
+      progress * math.pi * 2,
+      sweep,
+      false,
+      arcPaint,
+    );
+    final arc2 = Paint()
+      ..color = coreColor.withOpacity(0.45)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.6
+      ..strokeCap = StrokeCap.round;
+    canvas.drawArc(
+      Rect.fromCircle(center: c, radius: radius * 0.78),
+      -progress * math.pi * 2 * 0.7,
+      0.9,
+      false,
+      arc2,
+    );
 
-    // Core glow
-    final coreGlow = Paint()
+    final coreR = radius * (processing ? 0.28 : 0.24);
+    final core = Paint()
       ..shader = RadialGradient(
         colors: [
-          coreColor.withOpacity(0.95 * intensity),
-          coreColor.withOpacity(0.42 * intensity),
-          coreColor.withOpacity(0.07),
-          Colors.transparent,
+          Colors.white.withOpacity(0.95),
+          coreColor,
+          coreColor.withOpacity(0.3),
         ],
-        stops: const [0.0, 0.34, 0.64, 1.0],
-      ).createShader(Rect.fromCircle(center: center, radius: radius * 0.55));
-    canvas.drawCircle(center, radius * 0.55, coreGlow);
+        stops: const [0.0, 0.45, 1.0],
+      ).createShader(Rect.fromCircle(center: c, radius: coreR));
+    canvas.drawCircle(c, coreR, core);
 
-    final core = Paint()..color = coreColor.withOpacity(0.98);
-    canvas.drawCircle(center, radius * 0.255, core);
-
-    final pin = Paint()..color = Colors.white.withOpacity(0.92);
-    canvas.drawCircle(center, radius * 0.075, pin);
-
-    // Expanding rings
-    if (listening || speaking) {
-      for (int i = 0; i < 3; i++) {
-        final t = (progress + i * 0.33) % 1.0;
-        final r = radius * (0.48 + t * 0.56);
-        final ring = Paint()
-          ..color = coreColor.withOpacity((1.0 - t) * 0.38)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.7;
-        canvas.drawCircle(center, r, ring);
-      }
-    }
+    final detail = Paint()
+      ..color = Colors.white.withOpacity(0.35)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0;
+    canvas.drawCircle(c, coreR * 0.55, detail);
   }
 
   @override
@@ -1143,10 +1186,6 @@ class ArcReactorPainter extends CustomPainter {
       old.processing != processing ||
       old.coreColor != coreColor;
 }
-
-// ---------------------------------------------------------------------------
-// GLASS / HOLO PANEL
-// ---------------------------------------------------------------------------
 
 class HoloPanel extends StatelessWidget {
   final Widget child;
@@ -1169,7 +1208,7 @@ class HoloPanel extends StatelessWidget {
     final content = Container(
       padding: padding ?? const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: kJarvisPanel.withOpacity(blur ? 0.72 : 0.88),
+        color: kJarvisPanel.withOpacity(blur ? 0.52 : 0.75),
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: kJarvisCyan.withOpacity(borderOpacity), width: 1),
         boxShadow: glow
@@ -4011,6 +4050,18 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
       return 'Preparing briefing, sir.';
     }
 
+    if (stripped == 'txadmin login' ||
+        stripped == 'test txadmin' ||
+        stripped == 'tx login') {
+      _txLogin(force: true).then((s) {
+        final msg = s['ok'] == true
+            ? 'txAdmin login successful, sir.'
+            : 'txAdmin login failed, sir. Check credentials in settings.';
+        _enqueueSpeech(msg, SpeechPriority.system);
+        if (!_privateMode) _addLog('assistant', msg);
+      });
+      return 'Authenticating with txAdmin, sir.';
+    }
     if (stripped == 'ptero status' ||
         stripped == 'server status' ||
         stripped == 'game server status') {
@@ -4793,11 +4844,12 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   Text(
-                                    'AWAITING INPUT',
+                                    'SYSTEMS ONLINE — AWAITING INPUT',
                                     style: TextStyle(
-                                      color: kJarvisCyan.withOpacity(0.2),
-                                      fontSize: 11,
-                                      letterSpacing: 3,
+                                      color: kJarvisCyan.withOpacity(0.28),
+                                      fontSize: 10,
+                                      letterSpacing: 2.4,
+                                      fontWeight: FontWeight.w500,
                                     ),
                                   ),
                                   const SizedBox(height: 8),
@@ -4831,7 +4883,7 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
                                     ? 'YOU'
                                     : isSystem
                                         ? 'SYSTEM'
-                                        : 'JARVIS';
+                                        : 'J.A.R.V.I.S';
                                 return TweenAnimationBuilder<double>(
                                   tween: Tween(begin: 0, end: 1),
                                   duration: const Duration(milliseconds: 320),
@@ -5267,6 +5319,20 @@ class _SettingsScreenState extends State<_SettingsScreen> {
     _braveKeyController.dispose();
     _githubTokenController.dispose();
     _githubRepoController.dispose();
+    _elevenKeyController.dispose();
+    _elevenVoiceController.dispose();
+    _mysqlHostController.dispose();
+    _mysqlPortController.dispose();
+    _mysqlUserController.dispose();
+    _mysqlDbController.dispose();
+    _mysqlPassController.dispose();
+    _mysqlOwnerController.dispose();
+    _pteroBaseController.dispose();
+    _pteroServerController.dispose();
+    _pteroKeyController.dispose();
+    _txUrlController.dispose();
+    _txUserController.dispose();
+    _txPassController.dispose();
     super.dispose();
   }
 
@@ -5387,6 +5453,85 @@ class _SettingsScreenState extends State<_SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(14, 0, 14, 40),
         children: [
+          _section('Integrations'),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Text(
+              'Scroll here for txAdmin, Pterodactyl, MySQL Mind',
+              style: TextStyle(color: Colors.white.withOpacity(0.35), fontSize: 11),
+            ),
+          ),
+          _holoTile(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'TXADMIN',
+                    style: TextStyle(
+                      color: kJarvisCyan,
+                      fontSize: 11,
+                      letterSpacing: 2,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Login + resource / server control',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.35),
+                      fontSize: 10.5,
+                    ),
+                  ),
+                  TextField(
+                    controller: _txUrlController,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: InputBorder.none,
+                      labelText: 'Panel URL',
+                      hintText: 'http://82.38.2.77:40120',
+                      labelStyle: TextStyle(color: Colors.white38),
+                      hintStyle: TextStyle(color: Colors.white24),
+                    ),
+                    onChanged: (v) =>
+                        widget.prefs?.setString(kPrefTxUrl, v.trim()),
+                  ),
+                  TextField(
+                    controller: _txUserController,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: InputBorder.none,
+                      labelText: 'Username',
+                      labelStyle: TextStyle(color: Colors.white38),
+                    ),
+                    onChanged: (v) =>
+                        widget.prefs?.setString(kPrefTxUser, v.trim()),
+                  ),
+                  TextField(
+                    controller: _txPassController,
+                    obscureText: true,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: InputBorder.none,
+                      labelText: 'Password',
+                      labelStyle: TextStyle(color: Colors.white38),
+                    ),
+                    onChanged: (v) {
+                      if (v.trim().isEmpty) {
+                        widget.storage.delete(key: kTxPassKey);
+                      } else {
+                        widget.storage.write(key: kTxPassKey, value: v.trim());
+                      }
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+
           _section('Voice'),
           _holoTile(
             child: ListTile(
@@ -5600,76 +5745,6 @@ class _SettingsScreenState extends State<_SettingsScreen> {
                       color: Colors.white.withOpacity(0.35),
                       fontSize: 10.5,
                     ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          _holoTile(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'TXADMIN',
-                    style: TextStyle(
-                      color: kJarvisCyan,
-                      fontSize: 11,
-                      letterSpacing: 2,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Login + resource / server control',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.35),
-                      fontSize: 10.5,
-                    ),
-                  ),
-                  TextField(
-                    controller: _txUrlController,
-                    style: const TextStyle(color: Colors.white, fontSize: 13),
-                    decoration: const InputDecoration(
-                      isDense: true,
-                      border: InputBorder.none,
-                      labelText: 'Panel URL',
-                      hintText: 'http://82.38.2.77:40120',
-                      labelStyle: TextStyle(color: Colors.white38),
-                      hintStyle: TextStyle(color: Colors.white24),
-                    ),
-                    onChanged: (v) =>
-                        widget.prefs?.setString(kPrefTxUrl, v.trim()),
-                  ),
-                  TextField(
-                    controller: _txUserController,
-                    style: const TextStyle(color: Colors.white, fontSize: 13),
-                    decoration: const InputDecoration(
-                      isDense: true,
-                      border: InputBorder.none,
-                      labelText: 'Username',
-                      labelStyle: TextStyle(color: Colors.white38),
-                    ),
-                    onChanged: (v) =>
-                        widget.prefs?.setString(kPrefTxUser, v.trim()),
-                  ),
-                  TextField(
-                    controller: _txPassController,
-                    obscureText: true,
-                    style: const TextStyle(color: Colors.white, fontSize: 13),
-                    decoration: const InputDecoration(
-                      isDense: true,
-                      border: InputBorder.none,
-                      labelText: 'Password',
-                      labelStyle: TextStyle(color: Colors.white38),
-                    ),
-                    onChanged: (v) {
-                      if (v.trim().isEmpty) {
-                        widget.storage.delete(key: kTxPassKey);
-                      } else {
-                        widget.storage.write(key: kTxPassKey, value: v.trim());
-                      }
-                    },
                   ),
                 ],
               ),
