@@ -1,7 +1,7 @@
 name: jarvis
 description: J.A.R.V.I.S. — Iron Man style personal AI assistant
 publish_to: "none"
-version: 1.1.0+2
+version: 2.0.0+20
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
