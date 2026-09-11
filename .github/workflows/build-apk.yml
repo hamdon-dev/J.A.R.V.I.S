@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-"""Patch Flutter-generated Android project for Jarvis."""
 from __future__ import annotations
 
 import re
