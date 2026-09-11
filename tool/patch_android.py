@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Patch Flutter-generated Android project for Jarvis."""
+"""Patch Flutter-generated Android project for Jarvis — valid XML only."""
 from __future__ import annotations
 
 import re
@@ -8,18 +8,13 @@ from pathlib import Path
 ROOT = Path(".")
 ANDROID = ROOT / "android"
 
-NOTIFICATION_SERVICE = '''
-        <!-- Required so J.A.R.V.I.S appears under Notification access -->
-        <service
-            android:name="notification.listener.service.NotificationListener"
-            android:label="J.A.R.V.I.S"
-            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
-            android:exported="true">
+SERVICE_BLOCK = """
+        <service android:name="notification.listener.service.NotificationListener" android:label="J.A.R.V.I.S" android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE" android:exported="true">
             <intent-filter>
-                <action android:name="android.service.notification.NotificationListenerService" />
+                <action android:name="android.service.notification.NotificationListenerService"/>
             </intent-filter>
         </service>
-'''
+"""
 
 
 def find_main_activities() -> list[Path]:
@@ -54,68 +49,68 @@ def patch_main_activity(path: Path) -> None:
 def patch_manifest() -> None:
     man = ANDROID / "app" / "src" / "main" / "AndroidManifest.xml"
     if not man.exists():
-        print("WARNING: AndroidManifest.xml missing")
-        return
+        raise SystemExit("AndroidManifest.xml missing")
+
     text = man.read_text(encoding="utf-8")
 
+    # Permissions — insert right after opening <manifest ...> tag
     perms = [
         "android.permission.USE_BIOMETRIC",
         "android.permission.USE_FINGERPRINT",
         "android.permission.RECORD_AUDIO",
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.FOREGROUND_SERVICE",
-        "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
         "android.permission.WAKE_LOCK",
         "android.permission.VIBRATE",
         "android.permission.INTERNET",
         "android.permission.ACCESS_NETWORK_STATE",
     ]
-    for p in perms:
-        if p not in text:
-            text = re.sub(
-                r"(<manifest\b[^>]*>)",
-                r"\1\n    <uses-permission android:name=\"" + p + r"\"/>",
-                text,
-                count=1,
-            )
-            print(f"Added permission: {p}")
+    for perm in perms:
+        if perm in text:
+            continue
+        line = f'    <uses-permission android:name="{perm}"/>\n'
+        text = re.sub(r"(<manifest\b[^>]*>\s*)", r"\1" + line, text, count=1)
+        print(f"Added permission: {perm}")
 
+    # Cleartext: only add attribute if missing, keep tag valid
     if "usesCleartextTraffic" not in text:
-        text = text.replace(
-            "<application",
+        text = re.sub(
+            r"<application\b",
             '<application android:usesCleartextTraffic="true"',
-            1,
+            text,
+            count=1,
         )
         print("Enabled cleartext traffic")
 
-    # App label so it is easy to find in Samsung lists
-    if 'android:label=' in text and "J.A.R.V.I.S" not in text:
+    # Application label
+    if re.search(r'<application\b[^>]*android:label=', text):
         text = re.sub(
-            r'android:label="[^"]*"',
-            'android:label="J.A.R.V.I.S"',
+            r'(<application\b[^>]*android:label=")([^"]*)(")',
+            r'\1J.A.R.V.I.S\3',
             text,
             count=1,
         )
         print("Set application label to J.A.R.V.I.S")
 
-    # Critical: notification listener service (must be in *app* manifest)
-    if "NotificationListenerService" not in text and "notification.listener.service.NotificationListener" not in text:
-        if "</application>" in text:
-            text = text.replace("</application>", NOTIFICATION_SERVICE + "\n    </application>", 1)
-            print("Injected NotificationListener service")
-        else:
-            print("WARNING: could not find </application> to inject service")
+    # Notification listener service
+    if "notification.listener.service.NotificationListener" not in text:
+        if "</application>" not in text:
+            raise SystemExit("No </application> in manifest")
+        text = text.replace("</application>", SERVICE_BLOCK + "    </application>", 1)
+        print("Injected NotificationListener service")
     else:
         print("NotificationListener service already present")
-        # Ensure label is J.A.R.V.I.S for the service
-        text = re.sub(
-            r'(android:name="notification\.listener\.service\.NotificationListener"[^>]*android:label=")([^"]*)(")',
-            r'\1J.A.R.V.I.S\3',
-            text,
-        )
+
+    # Basic well-formedness checks
+    if text.count("<application") != text.count("</application>"):
+        raise SystemExit("Manifest application tags unbalanced after patch")
+    if "<manifest" not in text or "</manifest>" not in text:
+        raise SystemExit("Manifest root broken after patch")
 
     man.write_text(text, encoding="utf-8")
     print(f"Manifest updated: {man}")
+    print("--- manifest preview ---")
+    print(man.read_text(encoding="utf-8")[:2500])
 
 
 def patch_min_sdk() -> None:
@@ -133,7 +128,7 @@ def patch_min_sdk() -> None:
             bg.write_text(text, encoding="utf-8")
             print(f"minSdk → 26 in {bg}")
         else:
-            print(f"minSdk already patched or pattern not found: {bg}")
+            print(f"minSdk note: {bg}")
 
 
 def main() -> None:
