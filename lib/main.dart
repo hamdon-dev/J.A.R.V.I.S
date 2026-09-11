@@ -1761,6 +1761,13 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
     } catch (_) {}
 
     _discordAutoReply = p.getBool(kPrefDiscordAutoReply) ?? false;
+    if (_discordAutoReply) {
+      // Restore listener after restart
+      Future.microtask(() async {
+        await _checkNotificationPermission();
+        if (_notificationsEnabled) _startNotificationListener();
+      });
+    }
     _syncEnabled = p.getBool(kPrefSyncEnabled) ?? false;
     _pcSyncHost = p.getString(kPrefPcHost) ?? '';
     _pcSyncPort = p.getInt(kPrefPcPort) ?? kDefaultPcAgentPort;
@@ -2142,9 +2149,82 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
   }
 
   Future<void> _requestNotificationPermission() async {
-    final granted = await NotificationListenerService.requestPermission();
+    // Opens system Notification access screen (Samsung / Android)
+    var granted = await NotificationListenerService.requestPermission();
+    if (!granted) {
+      try {
+        const intent = AndroidIntent(
+          action: 'android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS',
+        );
+        await intent.launch();
+      } catch (_) {
+        try {
+          const intent = AndroidIntent(
+            action: 'android.settings.NOTIFICATION_LISTENER_SETTINGS',
+          );
+          await intent.launch();
+        } catch (e) {
+          _addLog('system', 'Could not open Notification access settings: $e');
+        }
+      }
+      // Re-check after user returns
+      await Future.delayed(const Duration(seconds: 2));
+      granted = await NotificationListenerService.isPermissionGranted();
+    }
     if (mounted) setState(() => _notificationsEnabled = granted);
+    if (granted) {
+      _startNotificationListener();
+      _addLog('system', 'Notification access granted — listener active.');
+    } else {
+      _addLog(
+        'system',
+        'Notification access NOT granted. Enable J.A.R.V.I.S in Notification access, then say "enable discord auto-reply" again.',
+      );
+    }
+  }
+
+  /// Turn on unavailable / Discord auto-reply end-to-end.
+  Future<Map<String, dynamic>> _enableDiscordAwayMode() async {
+    _discordAutoReply = true;
+    await _prefs?.setBool(kPrefDiscordAutoReply, true);
+
+    await _checkNotificationPermission();
+    if (!_notificationsEnabled) {
+      await _requestNotificationPermission();
+    } else {
+      _startNotificationListener();
+    }
+
+    // Keep process alive so listener is not killed on Samsung
+    if (!_serviceRunning) {
+      try {
+        await _startForegroundService();
+      } catch (e) {
+        _addLog('system', 'Foreground service note: $e');
+      }
+    } else {
+      try {
+        await FlutterForegroundTask.updateService(
+          notificationTitle: 'JARVIS · Away mode',
+          notificationText: 'Discord auto-reply active',
+        );
+      } catch (_) {}
+    }
+
+    final granted = _notificationsEnabled ||
+        await NotificationListenerService.isPermissionGranted();
+    _notificationsEnabled = granted;
     if (granted) _startNotificationListener();
+
+    if (mounted) setState(() {});
+    return {
+      'ok': true,
+      'discord_auto_reply': true,
+      'notifications_granted': granted,
+      'message': granted
+          ? 'Unavailable mode is on. I will reply to Discord DMs. Keep this notification / app running.'
+          : 'Unavailable mode is flagged on, but Notification access is still off. Open the settings screen, enable J.A.R.V.I.S, then try again.',
+    };
   }
 
   bool _isSensitive(String text) =>
@@ -2259,31 +2339,26 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
     bool ok = false;
     Object? err;
 
-    // Attempt 1: short body (best chance for RemoteInput)
-    try {
-      final r1 = await event.sendReply(shortReply);
-      ok = r1 == true;
-    } catch (e) {
-      err = e;
-    }
-
-    // Attempt 2: full footer
-    if (!ok) {
+    // Multiple attempts — Discord/Samsung often need a delay before RemoteInput works
+    final attempts = <String>[
+      shortReply,
+      shortReply,
+      fullReply,
+      "Emp is unavailable right now.",
+      fullReply,
+    ];
+    final delays = <int>[0, 300, 600, 1000, 1500];
+    for (var i = 0; i < attempts.length; i++) {
+      if (ok) break;
       try {
-        await Future.delayed(const Duration(milliseconds: 150));
-        final r2 = await event.sendReply(fullReply);
-        ok = r2 == true;
-      } catch (e) {
-        err = e;
-      }
-    }
-
-    // Attempt 3: delayed retry (OEM race when notification still inflating)
-    if (!ok) {
-      try {
-        await Future.delayed(const Duration(milliseconds: 450));
-        final r3 = await event.sendReply(shortReply);
-        ok = r3 == true;
+        if (delays[i] > 0) {
+          await Future.delayed(Duration(milliseconds: delays[i]));
+        }
+        final r = await event.sendReply(attempts[i]);
+        ok = r == true;
+        if (ok) {
+          _addLog('system', 'Reply succeeded on attempt ${i + 1}');
+        }
       } catch (e) {
         err = e;
       }
@@ -2760,36 +2835,9 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
               'packing list builder, meeting agenda helper. Avoid duplicates.',
         });
       case 'enable_discord_auto_reply':
-        _discordAutoReply = true;
-        await _prefs?.setBool(kPrefDiscordAutoReply, true);
-        // Re-bind listener so away mode is live immediately
-        await _checkNotificationPermission();
-        if (!_notificationsEnabled) {
-          await _requestNotificationPermission();
-        } else {
-          _startNotificationListener();
-        }
-        if (!_notificationsEnabled) {
-          await _requestNotificationPermission();
-        }
-        // Ensure listener is attached.
-        if (_notificationsEnabled ||
-            await NotificationListenerService.isPermissionGranted()) {
-          _notificationsEnabled = true;
-          _startNotificationListener();
-        }
-        if (mounted) setState(() {});
+        final away = await _enableDiscordAwayMode();
         _addLog('system', 'Discord unavailable mode ON — will auto-reply to DMs.');
-        final granted = _notificationsEnabled ||
-            await NotificationListenerService.isPermissionGranted();
-        return jsonEncode({
-          'ok': true,
-          'discord_auto_reply': true,
-          'notifications_granted': granted,
-          'message': granted
-              ? 'Unavailable mode is on. I will reply to Discord DMs and append the Emp unavailable footer. Keep the app running (or in recent apps) so notifications can be answered.'
-              : 'Unavailable mode is on, but Notification Access is not granted. Open Settings, grant Notification Access, then try again. Without it I cannot read or reply to Discord.',
-        });
+        return jsonEncode(away);
       case 'disable_discord_auto_reply':
         _discordAutoReply = false;
         await _prefs?.setBool(kPrefDiscordAutoReply, false);
@@ -4306,6 +4354,12 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
       return 'Preparing briefing, sir.';
     }
 
+    if (stripped == 'notification access' ||
+        stripped == 'open notification access' ||
+        stripped == 'grant notification access') {
+      _requestNotificationPermission();
+      return 'Opening Notification access, sir. Enable J.A.R.V.I.S on that list.';
+    }
     if (stripped == 'bot test' ||
         stripped == 'discord bot test' ||
         stripped == 'test discord bot') {
