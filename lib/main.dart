@@ -33,6 +33,9 @@ const String kPteroApiKeyKey = 'ptero_api_key';
 const String kPrefTxUrl = 'pref_txadmin_url';
 const String kPrefTxUser = 'pref_txadmin_user';
 const String kTxPassKey = 'txadmin_password';
+const String kDiscordBotTokenKey = 'discord_bot_token';
+const String kPrefDiscordBotChannel = 'pref_discord_bot_channel';
+const String kPrefDiscordBotName = 'pref_discord_bot_name';
 const String kPrefPteroBase = 'pref_ptero_base';
 const String kPrefPteroServer = 'pref_ptero_server_id';
 const String kGithubTokenKey = 'github_token';
@@ -565,6 +568,45 @@ const List<Map<String, dynamic>> kBuiltinToolSchema = [
 
 
 
+
+  {
+    'type': 'function',
+    'function': {
+      'name': 'discord_bot_test',
+      'description': 'Verify the Discord bot token and return the bot username/id.',
+      'parameters': {'type': 'object', 'properties': {}},
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'discord_bot_send',
+      'description': 'Send a message as the J.A.R.V.I.S Discord bot to a channel. Uses default channel from Settings if channel_id omitted.',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'content': {'type': 'string'},
+          'channel_id': {'type': 'string'},
+        },
+        'required': ['content'],
+      },
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'discord_bot_dm',
+      'description': 'Send a direct message as the Discord bot to a user ID (snowflake).',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'user_id': {'type': 'string'},
+          'content': {'type': 'string'},
+        },
+        'required': ['user_id', 'content'],
+      },
+    }
+  },
   {
     'type': 'function',
     'function': {
@@ -1400,6 +1442,9 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
   String? _txCookie;
   String? _txCsrf;
   DateTime? _txAuthAt;
+  String? _discordBotToken;
+  String _discordBotChannel = '';
+  String _discordBotName = 'J.A.R.V.I.S';
   double _deviceRate = kDefaultDeviceRate;
   String _systemPromptExtra = '';
 
@@ -1699,6 +1744,9 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
     _txUrl = p.getString(kPrefTxUrl) ?? 'http://82.38.2.77:40120';
     _txUser = p.getString(kPrefTxUser) ?? '';
     _txPass = await _storage.read(key: kTxPassKey);
+    _discordBotToken = await _storage.read(key: kDiscordBotTokenKey);
+    _discordBotChannel = p.getString(kPrefDiscordBotChannel) ?? '';
+    _discordBotName = p.getString(kPrefDiscordBotName) ?? 'J.A.R.V.I.S';
     try {
       final raw = p.getString(kPrefReminders);
       if (raw != null && raw.isNotEmpty) {
@@ -2129,30 +2177,47 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
 
         // --- Unavailable mode: reply immediately (no AI delay) ---
         if (isDiscord && _discordAutoReply) {
+          // Skip non-message Discord noise
+          final lower = combined.toLowerCase();
+          if (lower.contains('missed call') ||
+              lower.contains('is calling') ||
+              lower.contains('started a call') ||
+              lower.contains('incoming call') ||
+              lower.contains('friend request') ||
+              lower.contains('sent you a friend') ||
+              lower.contains('voice message') && body.isEmpty) {
+            _addLog('system', 'Skipping non-DM Discord notification');
+            return;
+          }
+          // Server posts often use title "Discord" or "#channel"
           final sender = title.isNotEmpty ? title : 'someone';
-          final msg =
-              body.isNotEmpty ? body : (title.isNotEmpty ? title : 'New message');
-
-          // Debounce: Discord often fires several updates for one DM.
-          final dedupeKey = '$package|$sender';
-          final last = _discordRecentReplies[dedupeKey];
-          final now = DateTime.now();
-          if (last != null && now.difference(last).inSeconds < 60) {
-            _addLog('system', 'Skipping duplicate Discord notif from $sender');
+          if (sender.toLowerCase() == 'discord' && body.isEmpty) {
             return;
           }
 
-          // Mark before await so parallel events don't double-send.
-          _discordRecentReplies[dedupeKey] = now;
-          _discordRecentReplies
-              .removeWhere((_, t) => now.difference(t).inMinutes > 10);
+          final msg =
+              body.isNotEmpty ? body : (title.isNotEmpty ? title : 'New message');
+
+          final dedupeKey = '$package|${sender.toLowerCase()}|${body.hashCode}';
+          final last = _discordRecentReplies[dedupeKey];
+          final now = DateTime.now();
+          // Only skip if we already *succeeded* recently for same content
+          if (last != null && now.difference(last).inSeconds < 90) {
+            _addLog('system', 'Skipping duplicate Discord notif from $sender');
+            return;
+          }
 
           final announce = body.isNotEmpty
               ? 'Discord from $sender. $body'
               : 'Discord from $sender.';
           _enqueueSpeech(announce, SpeechPriority.notification);
 
-          await _sendDiscordReplyNow(event, sender, msg);
+          final ok = await _sendDiscordReplyNow(event, sender, msg);
+          if (ok) {
+            _discordRecentReplies[dedupeKey] = now;
+            _discordRecentReplies
+                .removeWhere((_, ts) => now.difference(ts).inMinutes > 15);
+          }
           return;
         }
 
@@ -2175,53 +2240,99 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
 
   /// Sends the unavailable reply immediately. Android drops RemoteInput
   /// actions if we wait on a network call first.
-  Future<void> _sendDiscordReplyNow(
+  /// Returns true if a reply was delivered (notification RemoteInput or bot fallback).
+  Future<bool> _sendDiscordReplyNow(
     dynamic event,
     String sender,
     String message,
   ) async {
-    // Optional: tailor the first line with a fast local template.
-    // AI is intentionally NOT awaited before sendReply — that was the bug.
-    final replyBody =
-        "Hey, Emp is currently unavailable. I'll pass your message along when they're back.";
-    final fullReply = '$replyBody$kDiscordAutoReplyFooter';
+    // Keep first line short — RemoteInput often fails on very long text.
+    const shortReply =
+        "Emp is currently unavailable. I'll pass this on when they're back.";
+    final fullReply = '$shortReply$kDiscordAutoReplyFooter';
 
-    _addLog('system', 'Sending Discord reply to $sender…');
+    _addLog(
+      'system',
+      'Sending Discord reply to $sender (canReply=${event.canReply})…',
+    );
 
     bool ok = false;
     Object? err;
+
+    // Attempt 1: short body (best chance for RemoteInput)
     try {
-      // Always attempt — some Discord builds leave canReply null/false
-      // even when a reply action exists.
-      final result = await event.sendReply(fullReply);
-      ok = result == true;
-      if (!ok) {
-        // One immediate retry helps on some OEMs.
-        await Future.delayed(const Duration(milliseconds: 200));
-        final retry = await event.sendReply(fullReply);
-        ok = retry == true;
-      }
+      final r1 = await event.sendReply(shortReply);
+      ok = r1 == true;
     } catch (e) {
       err = e;
     }
 
+    // Attempt 2: full footer
+    if (!ok) {
+      try {
+        await Future.delayed(const Duration(milliseconds: 150));
+        final r2 = await event.sendReply(fullReply);
+        ok = r2 == true;
+      } catch (e) {
+        err = e;
+      }
+    }
+
+    // Attempt 3: delayed retry (OEM race when notification still inflating)
+    if (!ok) {
+      try {
+        await Future.delayed(const Duration(milliseconds: 450));
+        final r3 = await event.sendReply(shortReply);
+        ok = r3 == true;
+      } catch (e) {
+        err = e;
+      }
+    }
+
+    // Fallback: post to Discord bot default channel so staff still see it
+    if (!ok && _discordBotConfigured && _discordBotChannel.trim().isNotEmpty) {
+      final notice =
+          '**Away auto-reply** — DM from **$sender** could not be answered via notification reply.\n'
+          '> ${message.length > 200 ? message.substring(0, 200) : message}\n'
+          '_Emp is unavailable. Jarvis attempted a direct reply (canReply=${event.canReply})._';
+      final bot = await _discordBotSend(content: notice);
+      if (bot['ok'] == true) {
+        _addLog(
+          'system',
+          'Notification reply failed; posted away notice to bot channel.',
+        );
+        _enqueueSpeech(
+          'I could not reply in the Discord notification, sir, but I posted an away notice in the bot channel.',
+          SpeechPriority.notification,
+        );
+        return false;
+      }
+    }
+
     if (ok) {
-      _addLog('assistant', 'Replied to $sender on Discord: $replyBody');
+      _addLog('assistant', 'Replied to $sender on Discord: $shortReply');
       _enqueueSpeech(
         'I replied to $sender on Discord.',
         SpeechPriority.notification,
       );
-    } else {
-      _addLog(
-        'system',
-        'Discord reply FAILED for $sender '
-        '(canReply=${event.canReply}, error=$err). '
-        'Check: 1) Notification Access granted for J.A.R.V.I.S  '
-        '2) Discord DM (not a server channel)  '
-        '3) Notification shows a Reply action in the shade  '
-        '4) App is not force-stopped.',
-      );
+      return true;
     }
+
+    _addLog(
+      'system',
+      'Discord reply FAILED for $sender '
+      '(canReply=${event.canReply}, error=$err). '
+      'Fix: Settings → grant Notification Access to J.A.R.V.I.S; '
+      'use a real Discord DM (not a server channel); '
+      'expand the notification and confirm a Reply action exists; '
+      'keep Jarvis in recents (not force-stopped); '
+      'Discord → Settings → Notifications → enable message notifications.',
+    );
+    _enqueueSpeech(
+      'I detected a Discord message from $sender but could not send a reply. Check notification access, sir.',
+      SpeechPriority.system,
+    );
+    return false;
   }
 
   Future<void> _initSpeech() async {
@@ -2651,6 +2762,13 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
       case 'enable_discord_auto_reply':
         _discordAutoReply = true;
         await _prefs?.setBool(kPrefDiscordAutoReply, true);
+        // Re-bind listener so away mode is live immediately
+        await _checkNotificationPermission();
+        if (!_notificationsEnabled) {
+          await _requestNotificationPermission();
+        } else {
+          _startNotificationListener();
+        }
         if (!_notificationsEnabled) {
           await _requestNotificationPermission();
         }
@@ -2898,6 +3016,21 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
 
       
       
+      
+      case 'discord_bot_test':
+        _note('Discord bot test');
+        return jsonEncode(await _discordBotMe());
+      case 'discord_bot_send':
+        final c = (args['content'] ?? '').toString();
+        final ch = args['channel_id']?.toString();
+        _note('Discord bot send');
+        return jsonEncode(await _discordBotSend(content: c, channelId: ch));
+      case 'discord_bot_dm':
+        final uid = (args['user_id'] ?? '').toString();
+        final c = (args['content'] ?? '').toString();
+        _note('Discord bot DM');
+        return jsonEncode(await _discordBotDm(userId: uid, content: c));
+
       case 'tx_login_test':
         _note('txAdmin login');
         return jsonEncode(await _txLogin(force: true));
@@ -3089,6 +3222,8 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
         'Pterodactyl (one configured game server): ptero_status, ptero_power (start|stop|restart|kill), ptero_command, ptero_backup, ptero_list_backups. Confirm before kill or stop if players may be online.');
     b.writeln(
         'txAdmin panel (configured URL): tx_login_test, tx_resource (restart|start|stop|ensure + resource name), tx_server (restart|stop|start whole FXServer), tx_announce, tx_refresh. Confirm before full server restart or stop.');
+    b.writeln(
+        'Discord BOT (own account): discord_bot_test, discord_bot_send (channel message), discord_bot_dm (user id). This is separate from notification auto-reply. Speak as J.A.R.V.I.S when posting.');
     b.writeln('Be concise unless the user asks for detail.');
     if (_systemPromptExtra.isNotEmpty) {
       b.writeln('\nExtra instructions:\n$_systemPromptExtra');
@@ -3136,6 +3271,127 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
   }
 
 
+
+
+  bool get _discordBotConfigured =>
+      _discordBotToken != null && _discordBotToken!.trim().isNotEmpty;
+
+  Map<String, String> get _discordBotHeaders => {
+        'Authorization': 'Bot ${_discordBotToken!.trim()}',
+        'Content-Type': 'application/json',
+        'User-Agent': 'JarvisBot (Android, 2.0)',
+      };
+
+  Future<Map<String, dynamic>> _discordBotMe() async {
+    if (!_discordBotConfigured) {
+      return {'ok': false, 'error': 'Discord bot token not set'};
+    }
+    try {
+      final res = await http
+          .get(
+            Uri.parse('https://discord.com/api/v10/users/@me'),
+            headers: _discordBotHeaders,
+          )
+          .timeout(const Duration(seconds: 15));
+      if (res.statusCode != 200) {
+        return {
+          'ok': false,
+          'statusCode': res.statusCode,
+          'error': res.body.length > 300 ? res.body.substring(0, 300) : res.body,
+        };
+      }
+      final data = jsonDecode(res.body);
+      return {
+        'ok': true,
+        'id': data['id'],
+        'username': data['username'],
+        'discriminator': data['discriminator'],
+        'bot': data['bot'] == true,
+      };
+    } catch (e) {
+      return {'ok': false, 'error': e.toString()};
+    }
+  }
+
+  Future<Map<String, dynamic>> _discordBotSend({
+    required String content,
+    String? channelId,
+  }) async {
+    if (!_discordBotConfigured) {
+      return {'ok': false, 'error': 'Discord bot token not set'};
+    }
+    final ch = (channelId ?? _discordBotChannel).trim();
+    if (ch.isEmpty) {
+      return {
+        'ok': false,
+        'error': 'channel_id required (or set default channel in Settings)',
+      };
+    }
+    final text = content.trim();
+    if (text.isEmpty) return {'ok': false, 'error': 'content required'};
+    // Discord limit 2000 chars
+    final body = text.length > 1900 ? '${text.substring(0, 1900)}…' : text;
+    try {
+      final res = await http
+          .post(
+            Uri.parse('https://discord.com/api/v10/channels/$ch/messages'),
+            headers: _discordBotHeaders,
+            body: jsonEncode({'content': body}),
+          )
+          .timeout(const Duration(seconds: 20));
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        final data = jsonDecode(res.body);
+        return {
+          'ok': true,
+          'message_id': data['id'],
+          'channel_id': ch,
+        };
+      }
+      return {
+        'ok': false,
+        'statusCode': res.statusCode,
+        'error': res.body.length > 400 ? res.body.substring(0, 400) : res.body,
+      };
+    } catch (e) {
+      return {'ok': false, 'error': e.toString()};
+    }
+  }
+
+  Future<Map<String, dynamic>> _discordBotDm({
+    required String userId,
+    required String content,
+  }) async {
+    if (!_discordBotConfigured) {
+      return {'ok': false, 'error': 'Discord bot token not set'};
+    }
+    final uid = userId.trim();
+    final text = content.trim();
+    if (uid.isEmpty || text.isEmpty) {
+      return {'ok': false, 'error': 'user_id and content required'};
+    }
+    try {
+      // Open DM channel
+      final open = await http
+          .post(
+            Uri.parse('https://discord.com/api/v10/users/@me/channels'),
+            headers: _discordBotHeaders,
+            body: jsonEncode({'recipient_id': uid}),
+          )
+          .timeout(const Duration(seconds: 15));
+      if (open.statusCode != 200 && open.statusCode != 201) {
+        return {
+          'ok': false,
+          'statusCode': open.statusCode,
+          'error': open.body.length > 300 ? open.body.substring(0, 300) : open.body,
+        };
+      }
+      final ch = jsonDecode(open.body)['id']?.toString();
+      if (ch == null) return {'ok': false, 'error': 'No DM channel id'};
+      return _discordBotSend(content: text, channelId: ch);
+    } catch (e) {
+      return {'ok': false, 'error': e.toString()};
+    }
+  }
 
   bool get _txConfigured =>
       _txUrl.trim().isNotEmpty &&
@@ -4050,6 +4306,18 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
       return 'Preparing briefing, sir.';
     }
 
+    if (stripped == 'bot test' ||
+        stripped == 'discord bot test' ||
+        stripped == 'test discord bot') {
+      _discordBotMe().then((s) {
+        final msg = s['ok'] == true
+            ? 'Discord bot online as ${s['username']}, sir.'
+            : 'Discord bot check failed, sir. Verify the token in settings.';
+        _enqueueSpeech(msg, SpeechPriority.system);
+        if (!_privateMode) _addLog('assistant', msg);
+      });
+      return 'Checking the Discord bot, sir.';
+    }
     if (stripped == 'txadmin login' ||
         stripped == 'test txadmin' ||
         stripped == 'tx login') {
@@ -5221,7 +5489,9 @@ class _SettingsScreenState extends State<_SettingsScreen> {
       _pteroKeyController,
       _txUrlController,
       _txUserController,
-      _txPassController;
+      _txPassController,
+      _discordBotTokenController,
+      _discordBotChannelController;
   static const kVoices = ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'];
 
   @override
@@ -5251,6 +5521,14 @@ class _SettingsScreenState extends State<_SettingsScreen> {
     _txUserController = TextEditingController(
         text: widget.prefs?.getString(kPrefTxUser) ?? '');
     _txPassController = TextEditingController();
+    _discordBotTokenController = TextEditingController();
+    _discordBotChannelController = TextEditingController(
+        text: widget.prefs?.getString(kPrefDiscordBotChannel) ?? '');
+    widget.storage.read(key: kDiscordBotTokenKey).then((v) {
+      if (v != null && mounted) {
+        setState(() => _discordBotTokenController.text = v);
+      }
+    });
     widget.storage.read(key: kTxPassKey).then((v) {
       if (v != null && mounted) setState(() => _txPassController.text = v);
     });
@@ -5333,6 +5611,8 @@ class _SettingsScreenState extends State<_SettingsScreen> {
     _txUrlController.dispose();
     _txUserController.dispose();
     _txPassController.dispose();
+    _discordBotTokenController.dispose();
+    _discordBotChannelController.dispose();
     super.dispose();
   }
 
@@ -5526,6 +5806,67 @@ class _SettingsScreenState extends State<_SettingsScreen> {
                         widget.storage.write(key: kTxPassKey, value: v.trim());
                       }
                     },
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+
+          _holoTile(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'DISCORD BOT',
+                    style: TextStyle(
+                      color: kJarvisCyan,
+                      fontSize: 11,
+                      letterSpacing: 2,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Bot token from Discord Developer Portal — J.A.R.V.I.S own account',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.35),
+                      fontSize: 10.5,
+                    ),
+                  ),
+                  TextField(
+                    controller: _discordBotTokenController,
+                    obscureText: true,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: InputBorder.none,
+                      labelText: 'Bot token',
+                      labelStyle: TextStyle(color: Colors.white38),
+                    ),
+                    onChanged: (v) {
+                      if (v.trim().isEmpty) {
+                        widget.storage.delete(key: kDiscordBotTokenKey);
+                      } else {
+                        widget.storage
+                            .write(key: kDiscordBotTokenKey, value: v.trim());
+                      }
+                    },
+                  ),
+                  TextField(
+                    controller: _discordBotChannelController,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: InputBorder.none,
+                      labelText: 'Default channel ID',
+                      hintText: 'Server channel snowflake',
+                      labelStyle: TextStyle(color: Colors.white38),
+                      hintStyle: TextStyle(color: Colors.white24),
+                    ),
+                    onChanged: (v) => widget.prefs
+                        ?.setString(kPrefDiscordBotChannel, v.trim()),
                   ),
                 ],
               ),
