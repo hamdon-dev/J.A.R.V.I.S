@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:flutter_tts/flutter_tts.dart';
@@ -15,6 +16,7 @@ import 'package:local_auth/local_auth.dart';
 import 'package:mysql1/mysql1.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:cross_file/cross_file.dart';
 import 'dart:io';
 import 'dart:collection';
 import 'dart:convert';
@@ -159,6 +161,9 @@ const Color kJarvisGreen = Color(0xFF00E676);
 // ---------------------------------------------------------------------------
 // SCHEMA SANITIZATION
 // ---------------------------------------------------------------------------
+
+bool get kIsAndroid => !kIsWeb && Platform.isAndroid;
+bool get kIsIOS => !kIsWeb && Platform.isIOS;
 
 Map<String, dynamic> sanitizeToolSchema(dynamic schema) {
   if (schema is! Map) return {'type': 'object', 'properties': {}};
@@ -328,7 +333,9 @@ void main() {
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
   ]);
-  FlutterForegroundTask.initCommunicationPort();
+  if (!kIsWeb && Platform.isAndroid) {
+    FlutterForegroundTask.initCommunicationPort();
+  }
   runApp(const JarvisApp());
 }
 
@@ -1651,7 +1658,9 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
     _wave =
         AnimationController(vsync: this, duration: const Duration(milliseconds: 900))
           ..repeat();
-    FlutterForegroundTask.addTaskDataCallback(_onReceiveTaskData);
+    if (kIsAndroid) {
+      FlutterForegroundTask.addTaskDataCallback(_onReceiveTaskData);
+    }
     _updateClock();
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) => _updateClock());
     _energyDecay = Timer.periodic(const Duration(milliseconds: 120), (_) {
@@ -1727,7 +1736,9 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
     await _initSpeech();
     await _checkNotificationPermission();
 
-    final isRunning = await FlutterForegroundTask.isRunningService;
+    final isRunning = kIsAndroid
+        ? await FlutterForegroundTask.isRunningService
+        : false;
     _serviceRunning = isRunning;
     if (_fivemMonitor && !isRunning) {
       await _startForegroundService();
@@ -1820,6 +1831,7 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
   }
 
   void _initForegroundTask() {
+    if (!kIsAndroid) return;
     FlutterForegroundTask.init(
       androidNotificationOptions: AndroidNotificationOptions(
         channelId: 'jarvis_fivem_monitor',
@@ -1843,6 +1855,14 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
   }
 
   Future<void> _startForegroundService() async {
+    if (!kIsAndroid) {
+      _addLog('system', 'Foreground monitor is limited on iOS.');
+      _enqueueSpeech(
+        'Background monitoring is limited on iPhone, sir.',
+        SpeechPriority.system,
+      );
+      return;
+    }
     final result = await FlutterForegroundTask.startService(
       serviceId: 256,
       notificationTitle: 'JARVIS · Watching LDRP',
@@ -1863,6 +1883,11 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
   }
 
   Future<void> _stopForegroundService() async {
+    if (!kIsAndroid) {
+      _serviceRunning = false;
+      _fivemMonitor = false;
+      return;
+    }
     await FlutterForegroundTask.stopService();
     _serviceRunning = false;
     _fivemMonitor = false;
@@ -2309,14 +2334,42 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
     }
   }
 
+
+  Future<void> _launchAndroidIntent(String action, Map<String, dynamic>? args) async {
+    if (!kIsAndroid) {
+      _addLog('system', 'That system intent is Android-only.');
+      return;
+    }
+    try {
+      final intent = AndroidIntent(action: action, arguments: args);
+      await intent.launch();
+    } catch (e) {
+      _addLog('system', 'Intent failed: $e');
+    }
+  }
+
   Future<void> _checkNotificationPermission() async {
+    if (!kIsAndroid) {
+      if (mounted) setState(() => _notificationsEnabled = false);
+      return;
+    }
     final granted = await NotificationListenerService.isPermissionGranted();
     if (mounted) setState(() => _notificationsEnabled = granted);
     if (granted) _startNotificationListener();
   }
 
   Future<void> _requestNotificationPermission() async {
-    // Opens system Notification access screen (Samsung / Android)
+    if (!kIsAndroid) {
+      _addLog(
+        'system',
+        'Notification access / Discord auto-reply from notifications is Android-only, sir.',
+      );
+      _enqueueSpeech(
+        'Notification-based Discord reply is not available on iPhone. Use the Discord bot tools instead, sir.',
+        SpeechPriority.system,
+      );
+      return;
+    }
     var granted = await NotificationListenerService.requestPermission();
     if (!granted) {
       try {
@@ -2334,7 +2387,6 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
           _addLog('system', 'Could not open Notification access settings: $e');
         }
       }
-      // Re-check after user returns
       await Future.delayed(const Duration(seconds: 2));
       granted = await NotificationListenerService.isPermissionGranted();
     }
@@ -2398,6 +2450,7 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
       kSensitivePatterns.any((p) => p.hasMatch(text));
 
   void _startNotificationListener() {
+    if (!kIsAndroid) return;
     _notificationSubscription?.cancel();
     _notificationSubscription =
         NotificationListenerService.notificationsStream.listen((event) async {
@@ -2850,13 +2903,13 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
         final minute = (args['minute'] as num?)?.toInt() ?? 0;
         if (hour == null || hour < 0 || hour > 23) return jsonEncode({'ok': false});
         try {
-          await AndroidIntent(action: 'android.intent.action.SET_ALARM', arguments: {
+          await _launchAndroidIntent('android.intent.action.SET_ALARM', {
             'android.intent.extra.alarm.HOUR': hour,
             'android.intent.extra.alarm.MINUTES': minute,
             'android.intent.extra.alarm.MESSAGE':
                 (args['label'] ?? 'J.A.R.V.I.S').toString(),
             'android.intent.extra.alarm.SKIP_UI': true,
-          }).launch();
+          });
           return jsonEncode({'ok': true});
         } catch (_) {
           return jsonEncode({'ok': false});
@@ -2865,12 +2918,12 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
         final seconds = (args['seconds'] as num?)?.toInt();
         if (seconds == null || seconds <= 0) return jsonEncode({'ok': false});
         try {
-          await AndroidIntent(action: 'android.intent.action.SET_TIMER', arguments: {
+          await _launchAndroidIntent('android.intent.action.SET_TIMER', {
             'android.intent.extra.alarm.LENGTH': seconds,
             'android.intent.extra.alarm.MESSAGE':
                 (args['label'] ?? 'J.A.R.V.I.S').toString(),
             'android.intent.extra.alarm.SKIP_UI': true,
-          }).launch();
+          });
           return jsonEncode({'ok': true});
         } catch (_) {
           return jsonEncode({'ok': false});
@@ -5426,7 +5479,9 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
 
   @override
   void dispose() {
-    FlutterForegroundTask.removeTaskDataCallback(_onReceiveTaskData);
+    if (kIsAndroid) {
+      FlutterForegroundTask.removeTaskDataCallback(_onReceiveTaskData);
+    }
     _notificationSubscription?.cancel();
     _selfImproveTimer?.cancel();
     _clockTimer?.cancel();
