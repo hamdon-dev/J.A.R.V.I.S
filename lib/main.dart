@@ -13,6 +13,9 @@ import 'package:notification_listener_service/notification_event.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:mysql1/mysql1.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
+import 'dart:io';
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:async';
@@ -25,6 +28,14 @@ import 'dart:ui';
 // ---------------------------------------------------------------------------
 
 const String kKeyStorageKey = 'openai_api_key';
+const String kGrokKeyStorageKey = 'grok_api_key';
+const String kClaudeKeyStorageKey = 'claude_api_key';
+const String kPrefProvider = 'pref_ai_provider'; // openai | grok | claude
+const String kOpenAiChatUrl = 'https://api.openai.com/v1/chat/completions';
+const String kGrokChatUrl = 'https://api.x.ai/v1/chat/completions';
+const String kClaudeMessagesUrl = 'https://api.anthropic.com/v1/messages';
+const String kDefaultGrokModel = 'grok-2-latest';
+const String kDefaultClaudeModel = 'claude-sonnet-4-20250514';
 const String kEmailUserKey = 'email_user';
 const String kEmailPassKey = 'email_app_password';
 const String kRestartWebhookKey = 'fivem_restart_webhook';
@@ -78,6 +89,8 @@ const int kMaxDynamicTools = 40;
 const int kMaxVisibleLog = 16;
 
 const String kPrefModel = 'pref_model';
+const String kPrefCodeModel = 'pref_code_model';
+const String kDefaultCodeModel = 'gpt-4o';
 const String kPrefVoice = 'pref_voice';
 const String kPrefTtsMode = 'pref_tts_mode';
 const String kPrefRate = 'pref_rate';
@@ -569,6 +582,149 @@ const List<Map<String, dynamic>> kBuiltinToolSchema = [
 
 
 
+
+  {
+    'type': 'function',
+    'function': {
+      'name': 'workspace_list',
+      'description': 'List all files in the local J.A.R.V.I.S code workspace.',
+      'parameters': {'type': 'object', 'properties': {}},
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'workspace_write',
+      'description': 'Write or overwrite a file in the local code workspace. Use relative paths like src/main.py or scripts/hello.lua.',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'path': {'type': 'string'},
+          'content': {'type': 'string'},
+        },
+        'required': ['path', 'content'],
+      },
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'workspace_read',
+      'description': 'Read a file from the local code workspace.',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'path': {'type': 'string'},
+        },
+        'required': ['path'],
+      },
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'workspace_delete',
+      'description': 'Delete a file from the local code workspace.',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'path': {'type': 'string'},
+        },
+        'required': ['path'],
+      },
+    }
+  },
+
+  {
+    'type': 'function',
+    'function': {
+      'name': 'github_status',
+      'description': 'Check whether GitHub token and repo are configured for coding / self-improve.',
+      'parameters': {'type': 'object', 'properties': {}},
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'github_list_files',
+      'description': 'List files in the configured GitHub repo (optional path prefix).',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'path': {'type': 'string'},
+        },
+      },
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'github_read_file',
+      'description': 'Read a file from the configured GitHub repo.',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'path': {'type': 'string'},
+        },
+        'required': ['path'],
+      },
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'github_write_file',
+      'description': 'Create or update a file in the GitHub repo with a commit message.',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'path': {'type': 'string'},
+          'content': {'type': 'string'},
+          'message': {'type': 'string'},
+        },
+        'required': ['path', 'content'],
+      },
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'github_create_issue',
+      'description': 'Open a GitHub issue on the configured repo.',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'title': {'type': 'string'},
+          'body': {'type': 'string'},
+        },
+        'required': ['title'],
+      },
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'github_list_commits',
+      'description': 'List recent commits on the configured GitHub repo.',
+      'parameters': {'type': 'object', 'properties': {}},
+    }
+  },
+  {
+    'type': 'function',
+    'function': {
+      'name': 'self_improve_push',
+      'description': 'Commit an improvement to the GitHub repo (path + content + message).',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'path': {'type': 'string'},
+          'content': {'type': 'string'},
+          'message': {'type': 'string'},
+        },
+        'required': ['path', 'content'],
+      },
+    }
+  },
   {
     'type': 'function',
     'function': {
@@ -1415,6 +1571,13 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
   bool _serviceRunning = false;
 
   String _model = kDefaultModel;
+  String _provider = 'openai'; // openai | grok | claude
+  String? _grokKey;
+  String? _claudeKey;
+  String _codeModel = kDefaultCodeModel;
+  int _mainTab = 0; // 0 HUD, 1 Code
+  List<FileSystemEntity> _workspaceFiles = [];
+  String? _workspacePath;
   String _voice = kDefaultVoice;
   String _ttsMode = 'openai'; // openai | device | elevenlabs
   String? _elevenKey;
@@ -1713,6 +1876,10 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
     final p = _prefs;
     if (p == null) return;
     _model = p.getString(kPrefModel) ?? kDefaultModel;
+    _provider = p.getString(kPrefProvider) ?? 'openai';
+    _grokKey = await _storage.read(key: kGrokKeyStorageKey);
+    _claudeKey = await _storage.read(key: kClaudeKeyStorageKey);
+    _codeModel = p.getString(kPrefCodeModel) ?? kDefaultCodeModel;
     _voice = p.getString(kPrefVoice) ?? kDefaultVoice;
     _ttsMode = p.getString(kPrefTtsMode) ?? 'openai';
     _deviceRate = p.getDouble(kPrefRate) ?? kDefaultDeviceRate;
@@ -3065,6 +3232,24 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
       
       
       
+      
+      case 'workspace_list':
+        _note('Listing workspace');
+        return jsonEncode({'ok': true, 'files': await _workspaceList()});
+      case 'workspace_write':
+        final path = (args['path'] ?? '').toString();
+        final content = (args['content'] ?? '').toString();
+        _note('Writing $path');
+        return jsonEncode(await _workspaceWrite(path, content));
+      case 'workspace_read':
+        final path = (args['path'] ?? '').toString();
+        _note('Reading $path');
+        return jsonEncode(await _workspaceRead(path));
+      case 'workspace_delete':
+        final path = (args['path'] ?? '').toString();
+        _note('Deleting $path');
+        return jsonEncode(await _workspaceDelete(path));
+
       case 'discord_bot_test':
         _note('Discord bot test');
         return jsonEncode(await _discordBotMe());
@@ -3272,6 +3457,8 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
         'txAdmin panel (configured URL): tx_login_test, tx_resource (restart|start|stop|ensure + resource name), tx_server (restart|stop|start whole FXServer), tx_announce, tx_refresh. Confirm before full server restart or stop.');
     b.writeln(
         'Discord BOT (own account): discord_bot_test, discord_bot_send (channel message), discord_bot_dm (user id). This is separate from notification auto-reply. Speak as J.A.R.V.I.S when posting.');
+    b.writeln(
+        'CODE WORKSPACE: workspace_list, workspace_write, workspace_read, workspace_delete. When asked to make code, ALWAYS save with workspace_write so files are stored locally on the phone. Tell the user the file path. They can open the Code folder button to share/export files. Prefer complete, runnable files. Coding model may be stronger than chat model.');
     b.writeln('Be concise unless the user asks for detail.');
     if (_systemPromptExtra.isNotEmpty) {
       b.writeln('\nExtra instructions:\n$_systemPromptExtra');
@@ -3320,6 +3507,292 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
 
 
 
+
+
+  Future<Directory> _workspaceDir() async {
+    if (_workspacePath != null) {
+      return Directory(_workspacePath!);
+    }
+    final root = await getApplicationDocumentsDirectory();
+    final dir = Directory('${root.path}/jarvis_workspace');
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+    _workspacePath = dir.path;
+    return dir;
+  }
+
+  /// Secondary folder users can browse more easily (app external storage).
+  Future<Directory?> _workspacePublicDir() async {
+    try {
+      final ext = await getExternalStorageDirectory();
+      if (ext == null) return null;
+      final dir = Directory('${ext.path}/JARVIS_Code');
+      if (!await dir.exists()) await dir.create(recursive: true);
+      return dir;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<String> _workspaceSafePath(String relative) async {
+    final dir = await _workspaceDir();
+    final cleaned = relative
+        .replaceAll('\\\\', '/')
+        .split('/')
+        .where((p) => p.isNotEmpty && p != '.' && p != '..')
+        .join('/');
+    if (cleaned.isEmpty) {
+      throw Exception('Invalid path');
+    }
+    final full = File('${dir.path}/$cleaned');
+    // Ensure stays inside workspace
+    final resolved = full.path;
+    if (!resolved.startsWith(dir.path)) {
+      throw Exception('Path escapes workspace');
+    }
+    return resolved;
+  }
+
+  Future<List<Map<String, dynamic>>> _workspaceList() async {
+    final dir = await _workspaceDir();
+    final out = <Map<String, dynamic>>[];
+    if (!await dir.exists()) return out;
+    await for (final entity in dir.list(recursive: true, followLinks: false)) {
+      if (entity is File) {
+        final rel = entity.path.substring(dir.path.length + 1);
+        final stat = await entity.stat();
+        out.add({
+          'path': rel.replaceAll('\\\\', '/'),
+          'size': stat.size,
+          'modified': stat.modified.toIso8601String(),
+        });
+      }
+    }
+    out.sort((a, b) => (a['path'] as String).compareTo(b['path'] as String));
+    return out;
+  }
+
+  Future<Map<String, dynamic>> _workspaceWrite(String relative, String content) async {
+    final path = await _workspaceSafePath(relative);
+    final file = File(path);
+    await file.parent.create(recursive: true);
+    await file.writeAsString(content);
+
+    String? publicPath;
+    try {
+      final pub = await _workspacePublicDir();
+      if (pub != null) {
+        final cleaned = relative
+            .replaceAll('\\', '/')
+            .split('/')
+            .where((p) => p.isNotEmpty && p != '.' && p != '..')
+            .join('/');
+        final mirror = File('${pub.path}/$cleaned');
+        await mirror.parent.create(recursive: true);
+        await mirror.writeAsString(content);
+        publicPath = mirror.path;
+      }
+    } catch (_) {}
+
+    await _refreshWorkspaceFiles();
+    final rel = relative.replaceAll('\\', '/');
+    _addLog('system', 'Saved on phone: $rel (${content.length} bytes)');
+    return {
+      'ok': true,
+      'path': rel,
+      'absolute_path': path,
+      'public_path': publicPath,
+      'bytes': content.length,
+      'note': 'Saved locally on this phone. Open the Code folder button to share/export.',
+    };
+  }
+
+  Future<Map<String, dynamic>> _workspaceRead(String relative) async {
+    final path = await _workspaceSafePath(relative);
+    final file = File(path);
+    if (!await file.exists()) {
+      return {'ok': false, 'error': 'File not found'};
+    }
+    final text = await file.readAsString();
+    final clipped = text.length > 30000 ? '${text.substring(0, 30000)}\n…[truncated]' : text;
+    return {'ok': true, 'path': relative, 'content': clipped};
+  }
+
+  Future<Map<String, dynamic>> _workspaceDelete(String relative) async {
+    final path = await _workspaceSafePath(relative);
+    final file = File(path);
+    if (!await file.exists()) {
+      return {'ok': false, 'error': 'File not found'};
+    }
+    await file.delete();
+    await _refreshWorkspaceFiles();
+    return {'ok': true, 'deleted': relative};
+  }
+
+  Future<void> _refreshWorkspaceFiles() async {
+    try {
+      final dir = await _workspaceDir();
+      final files = <FileSystemEntity>[];
+      await for (final e in dir.list(recursive: true, followLinks: false)) {
+        if (e is File) files.add(e);
+      }
+      files.sort((a, b) => a.path.compareTo(b.path));
+      if (mounted) setState(() => _workspaceFiles = files);
+    } catch (e) {
+      _addLog('system', 'Workspace refresh: $e');
+    }
+  }
+
+  Future<void> _shareWorkspaceFile(String absolutePath) async {
+    final f = File(absolutePath);
+    if (!await f.exists()) return;
+    await Share.shareXFiles([XFile(absolutePath)], text: 'J.A.R.V.I.S workspace file');
+  }
+
+  Future<void> _openCodeWorkspace() async {
+    await _refreshWorkspaceFiles();
+    if (!mounted) return;
+    final dir = await _workspaceDir();
+    final pub = await _workspacePublicDir();
+    HapticFeedback.selectionClick();
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: kJarvisPanel,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: SizedBox(
+            height: MediaQuery.of(ctx).size.height * 0.72,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'CODE WORKSPACE',
+                        style: TextStyle(
+                          color: kJarvisCyan,
+                          letterSpacing: 2,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Saved on this phone',
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.45),
+                          fontSize: 11,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        dir.path,
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.3),
+                          fontSize: 9,
+                        ),
+                      ),
+                      if (pub != null)
+                        Text(
+                          'Mirror: ${pub.path}',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.3),
+                            fontSize: 9,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const Divider(color: Color(0x22FFFFFF), height: 1),
+                Expanded(
+                  child: _workspaceFiles.isEmpty
+                      ? Center(
+                          child: Text(
+                            'No files yet.\nAsk J.A.R.V.I.S to write code and it will save here.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.35),
+                              fontSize: 13,
+                              height: 1.4,
+                            ),
+                          ),
+                        )
+                      : ListView.builder(
+                          itemCount: _workspaceFiles.length,
+                          itemBuilder: (_, i) {
+                            final f = _workspaceFiles[i];
+                            final name = f.path.split('/').last;
+                            final rel = f.path.startsWith(dir.path)
+                                ? f.path.substring(dir.path.length + 1)
+                                : name;
+                            return ListTile(
+                              dense: true,
+                              leading: const Icon(Icons.insert_drive_file,
+                                  color: kJarvisCyan, size: 20),
+                              title: Text(
+                                rel,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              subtitle: Text(
+                                f.path,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.3),
+                                  fontSize: 10,
+                                ),
+                              ),
+                              trailing: IconButton(
+                                icon: const Icon(Icons.ios_share,
+                                    color: kJarvisCyan, size: 20),
+                                onPressed: () => _shareWorkspaceFile(f.path),
+                              ),
+                              onTap: () => _shareWorkspaceFile(f.path),
+                            );
+                          },
+                        ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Text(
+                    'Tip: share a file to Files / Drive / Discord to move it where you want.',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.3),
+                      fontSize: 10,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  String _modelForPrompt(String userText) {
+    final lower = userText.toLowerCase();
+    final coding = lower.contains('code') ||
+        lower.contains('script') ||
+        lower.contains('function') ||
+        lower.contains('workspace') ||
+        lower.contains('write a') && (lower.contains('py') || lower.contains('dart') || lower.contains('js') || lower.contains('lua'));
+    if (coding && _codeModel.trim().isNotEmpty) {
+      return _codeModel.trim();
+    }
+    return _model;
+  }
 
   bool get _discordBotConfigured =>
       _discordBotToken != null && _discordBotToken!.trim().isNotEmpty;
@@ -4459,9 +4932,17 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
   }
 
   Future<void> _processCommand(String command) async {
-    final key = _apiKey;
+    // Refresh keys from secure storage (settings may have changed)
+    _apiKey = await _storage.read(key: kKeyStorageKey);
+    _grokKey = await _storage.read(key: kGrokKeyStorageKey);
+    _claudeKey = await _storage.read(key: kClaudeKeyStorageKey);
+    final key = await _activeChatKey();
     if (key == null || key.isEmpty) {
-      _finish('NO API KEY');
+      _finish('NO API KEY ($_providerLabel)');
+      _enqueueSpeech(
+        'No $_providerLabel API key is set, sir. Add it in Settings under AI Provider.',
+        SpeechPriority.system,
+      );
       return;
     }
     if (!mounted) return;
@@ -4547,8 +5028,71 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
     }
   }
 
+
+  Future<String?> _activeChatKey() async {
+    if (_provider == 'grok') {
+      return _grokKey ?? await _storage.read(key: kGrokKeyStorageKey);
+    }
+    if (_provider == 'claude') {
+      return _claudeKey ?? await _storage.read(key: kClaudeKeyStorageKey);
+    }
+    return await _storage.read(key: kKeyStorageKey);
+  }
+
+  String get _activeChatUrl {
+    if (_provider == 'grok') return kGrokChatUrl;
+    if (_provider == 'claude') return kClaudeMessagesUrl;
+    return kOpenAiChatUrl;
+  }
+
+  String get _providerLabel {
+    switch (_provider) {
+      case 'grok':
+        return 'Grok';
+      case 'claude':
+        return 'Claude';
+      default:
+        return 'OpenAI';
+    }
+  }
+
+  List<Map<String, dynamic>> _openaiStyleTools() {
+    final tools = _allToolSchemas();
+    return tools;
+  }
+
+  List<Map<String, dynamic>> _claudeTools() {
+    final out = <Map<String, dynamic>>[];
+    for (final t in _allToolSchemas()) {
+      if (t is! Map) continue;
+      final fn = t['function'];
+      if (fn is! Map) continue;
+      out.add({
+        'name': fn['name'],
+        'description': fn['description'] ?? '',
+        'input_schema': fn['parameters'] ??
+            {
+              'type': 'object',
+              'properties': {},
+            },
+      });
+    }
+    return out;
+  }
+
   Future<String?> _chatLoop(String key) async {
     for (int round = 0; round < kMaxToolRounds; round++) {
+      if (_provider == 'claude') {
+        final result = await _claudeRound(key);
+        if (result == null) return null;
+        if (result['done'] == true) {
+          return (result['text'] ?? '').toString().trim();
+        }
+        // tool results already appended to history inside _claudeRound
+        continue;
+      }
+
+      // OpenAI + Grok (OpenAI-compatible)
       final messages = [
         {'role': 'system', 'content': _buildSystemPrompt()},
         ..._history
@@ -4558,21 +5102,21 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
         'messages': messages,
         'max_tokens': 550,
       };
-      if (_toolsEnabled) payload['tools'] = _allToolSchemas();
+      if (_toolsEnabled) payload['tools'] = _openaiStyleTools();
 
       final response = await http
           .post(
-            Uri.parse(kChatEndpoint),
+            Uri.parse(_activeChatUrl),
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': 'Bearer $key'
+              'Authorization': 'Bearer $key',
             },
             body: jsonEncode(payload),
           )
           .timeout(const Duration(seconds: 55));
 
       if (response.statusCode == 401) {
-        _finish('INVALID API KEY');
+        _finish('INVALID API KEY ($_providerLabel)');
         return null;
       }
       if (response.statusCode != 200) {
@@ -4582,9 +5126,10 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
           if (err is Map && err['error'] is Map) {
             final msg = err['error']['message']?.toString();
             if (msg != null) detail = msg;
+          } else if (err is Map && err['error'] != null) {
+            detail = err['error'].toString();
           }
         } catch (_) {}
-        // Retryable server errors
         if ((response.statusCode == 429 || response.statusCode >= 500) &&
             _retryCount < 1) {
           throw TimeoutException('retryable');
@@ -4616,7 +5161,7 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
         try {
           final raw = (fn?['arguments'] ?? '{}').toString();
           final decoded = jsonDecode(raw.isEmpty ? '{}' : raw);
-          if (decoded is Map<String, dynamic>) args = decoded;
+          if (decoded is Map) args = Map<String, dynamic>.from(decoded);
         } catch (_) {}
         _note('Running $name');
         final result = await _runTool(name, args);
@@ -4628,6 +5173,159 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
       }
     }
     return 'That took too many steps.';
+  }
+
+  /// One Claude Messages API round. Returns {done:true, text} or {done:false} after tools.
+  Future<Map<String, dynamic>?> _claudeRound(String key) async {
+    final claudeMessages = <Map<String, dynamic>>[];
+    for (final m in _history) {
+      final role = (m['role'] ?? '').toString();
+      if (role == 'system') continue;
+      if (role == 'tool') {
+        // Convert OpenAI-style tool result to Claude user tool_result
+        claudeMessages.add({
+          'role': 'user',
+          'content': [
+            {
+              'type': 'tool_result',
+              'tool_use_id': m['tool_call_id'] ?? m['id'] ?? '',
+              'content': (m['content'] ?? '').toString(),
+            }
+          ],
+        });
+        continue;
+      }
+      if (role == 'assistant' && m['tool_calls'] is List) {
+        final blocks = <Map<String, dynamic>>[];
+        final text = (m['content'] ?? '').toString();
+        if (text.isNotEmpty) {
+          blocks.add({'type': 'text', 'text': text});
+        }
+        for (final call in (m['tool_calls'] as List)) {
+          if (call is! Map) continue;
+          final fn = call['function'];
+          Map<String, dynamic> args = {};
+          if (fn is Map) {
+            try {
+              final raw = (fn['arguments'] ?? '{}').toString();
+              final d = jsonDecode(raw.isEmpty ? '{}' : raw);
+              if (d is Map) args = Map<String, dynamic>.from(d);
+            } catch (_) {}
+            blocks.add({
+              'type': 'tool_use',
+              'id': call['id'] ?? 'tool_${blocks.length}',
+              'name': fn['name'],
+              'input': args,
+            });
+          }
+        }
+        claudeMessages.add({'role': 'assistant', 'content': blocks});
+        continue;
+      }
+      if (role == 'user' || role == 'assistant') {
+        claudeMessages.add({
+          'role': role,
+          'content': (m['content'] ?? '').toString(),
+        });
+      }
+    }
+
+    final body = <String, dynamic>{
+      'model': _model.isEmpty ? kDefaultClaudeModel : _model,
+      'max_tokens': 550,
+      'system': _buildSystemPrompt(),
+      'messages': claudeMessages,
+    };
+    if (_toolsEnabled) {
+      body['tools'] = _claudeTools();
+    }
+
+    final response = await http
+        .post(
+          Uri.parse(kClaudeMessagesUrl),
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': key,
+            'anthropic-version': '2023-06-01',
+          },
+          body: jsonEncode(body),
+        )
+        .timeout(const Duration(seconds: 55));
+
+    if (response.statusCode == 401) {
+      _finish('INVALID API KEY (Claude)');
+      return null;
+    }
+    if (response.statusCode != 200) {
+      String detail = 'Claude API ${response.statusCode}';
+      try {
+        final err = jsonDecode(utf8.decode(response.bodyBytes));
+        if (err is Map) {
+          detail = (err['error'] is Map)
+              ? (err['error']['message']?.toString() ?? detail)
+              : (err['message']?.toString() ?? detail);
+        }
+      } catch (_) {}
+      if ((response.statusCode == 429 || response.statusCode >= 500) &&
+          _retryCount < 1) {
+        throw TimeoutException('retryable');
+      }
+      _finish(detail.toUpperCase());
+      _addLog('system', detail);
+      return null;
+    }
+
+    final data = jsonDecode(utf8.decode(response.bodyBytes)) as Map;
+    final content = data['content'];
+    if (content is! List) return {'done': true, 'text': ''};
+
+    final textParts = <String>[];
+    final toolUses = <Map<String, dynamic>>[];
+    for (final block in content) {
+      if (block is! Map) continue;
+      final type = block['type']?.toString();
+      if (type == 'text') {
+        textParts.add((block['text'] ?? '').toString());
+      } else if (type == 'tool_use') {
+        toolUses.add(Map<String, dynamic>.from(block));
+      }
+    }
+
+    if (toolUses.isEmpty) {
+      return {'done': true, 'text': textParts.join('\n').trim()};
+    }
+
+    // Store assistant tool_use in OpenAI-like history for next conversion
+    final fakeCalls = toolUses
+        .map((u) => {
+              'id': u['id'],
+              'type': 'function',
+              'function': {
+                'name': u['name'],
+                'arguments': jsonEncode(u['input'] ?? {}),
+              }
+            })
+        .toList();
+    _history.add({
+      'role': 'assistant',
+      'content': textParts.join('\n'),
+      'tool_calls': fakeCalls,
+    });
+
+    for (final u in toolUses) {
+      final name = (u['name'] ?? '').toString();
+      Map<String, dynamic> args = {};
+      final input = u['input'];
+      if (input is Map) args = Map<String, dynamic>.from(input);
+      _note('Running $name');
+      final result = await _runTool(name, args);
+      _history.add({
+        'role': 'tool',
+        'tool_call_id': u['id'],
+        'content': result,
+      });
+    }
+    return {'done': false};
   }
 
   void _trimHistory() {
@@ -5095,18 +5793,34 @@ class _JarvisHomeState extends State<JarvisHome> with TickerProviderStateMixin {
                             ),
                           ),
                           SizedBox(
-                            width: 72,
+                            width: 96,
                             child: Align(
                               alignment: Alignment.centerRight,
-                              child: IconButton(
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
-                                onPressed: _openSettings,
-                                icon: Icon(
-                                  Icons.settings_outlined,
-                                  color: kJarvisCyan.withOpacity(0.5),
-                                  size: 20,
-                                ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(),
+                                    onPressed: _openCodeWorkspace,
+                                    tooltip: 'Code on phone',
+                                    icon: Icon(
+                                      Icons.folder_open,
+                                      color: kJarvisCyan.withOpacity(0.7),
+                                      size: 20,
+                                    ),
+                                  ),
+                                  IconButton(
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(),
+                                    onPressed: _openSettings,
+                                    icon: Icon(
+                                      Icons.settings_outlined,
+                                      color: kJarvisCyan.withOpacity(0.5),
+                                      size: 20,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ),
@@ -5545,7 +6259,10 @@ class _SettingsScreenState extends State<_SettingsScreen> {
       _txUserController,
       _txPassController,
       _discordBotTokenController,
-      _discordBotChannelController;
+      _discordBotChannelController,
+      _openaiKeyController,
+      _grokKeyController,
+      _claudeKeyController;
   static const kVoices = ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'];
 
   @override
@@ -5576,6 +6293,18 @@ class _SettingsScreenState extends State<_SettingsScreen> {
         text: widget.prefs?.getString(kPrefTxUser) ?? '');
     _txPassController = TextEditingController();
     _discordBotTokenController = TextEditingController();
+    _openaiKeyController = TextEditingController();
+    _grokKeyController = TextEditingController();
+    _claudeKeyController = TextEditingController();
+    widget.storage.read(key: kKeyStorageKey).then((v) {
+      if (v != null && mounted) setState(() => _openaiKeyController.text = v);
+    });
+    widget.storage.read(key: kGrokKeyStorageKey).then((v) {
+      if (v != null && mounted) setState(() => _grokKeyController.text = v);
+    });
+    widget.storage.read(key: kClaudeKeyStorageKey).then((v) {
+      if (v != null && mounted) setState(() => _claudeKeyController.text = v);
+    });
     _discordBotChannelController = TextEditingController(
         text: widget.prefs?.getString(kPrefDiscordBotChannel) ?? '');
     widget.storage.read(key: kDiscordBotTokenKey).then((v) {
@@ -5667,6 +6396,9 @@ class _SettingsScreenState extends State<_SettingsScreen> {
     _txPassController.dispose();
     _discordBotTokenController.dispose();
     _discordBotChannelController.dispose();
+    _openaiKeyController.dispose();
+    _grokKeyController.dispose();
+    _claudeKeyController.dispose();
     super.dispose();
   }
 
@@ -5787,6 +6519,131 @@ class _SettingsScreenState extends State<_SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(14, 0, 14, 40),
         children: [
+
+          _section('AI Provider'),
+          _holoTile(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Active: ${widget.prefs?.getString(kPrefProvider) ?? 'openai'}',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.45),
+                      fontSize: 11,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final p in ['openai', 'grok', 'claude'])
+                        ChoiceChip(
+                          label: Text(
+                            p == 'openai'
+                                ? 'OpenAI'
+                                : p == 'grok'
+                                    ? 'Grok'
+                                    : 'Claude',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          selected:
+                              (widget.prefs?.getString(kPrefProvider) ?? 'openai') ==
+                                  p,
+                          selectedColor: kJarvisCyan.withOpacity(0.35),
+                          backgroundColor: kJarvisPanel,
+                          labelStyle: TextStyle(
+                            color: (widget.prefs?.getString(kPrefProvider) ??
+                                        'openai') ==
+                                    p
+                                ? kJarvisCyan
+                                : Colors.white70,
+                          ),
+                          onSelected: (_) async {
+                            await widget.prefs?.setString(kPrefProvider, p);
+                            // Sensible default model per provider
+                            if (p == 'grok') {
+                              await widget.prefs
+                                  ?.setString(kPrefModel, kDefaultGrokModel);
+                              _modelController.text = kDefaultGrokModel;
+                            } else if (p == 'claude') {
+                              await widget.prefs
+                                  ?.setString(kPrefModel, kDefaultClaudeModel);
+                              _modelController.text = kDefaultClaudeModel;
+                            } else {
+                              await widget.prefs
+                                  ?.setString(kPrefModel, kDefaultModel);
+                              _modelController.text = kDefaultModel;
+                            }
+                            setState(() {});
+                          },
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _openaiKeyController,
+                    obscureText: true,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: InputBorder.none,
+                      labelText: 'OpenAI API key',
+                      labelStyle: TextStyle(color: Colors.white38),
+                    ),
+                    onChanged: (v) {
+                      if (v.trim().isEmpty) {
+                        widget.storage.delete(key: kKeyStorageKey);
+                      } else {
+                        widget.storage.write(key: kKeyStorageKey, value: v.trim());
+                      }
+                    },
+                  ),
+                  TextField(
+                    controller: _grokKeyController,
+                    obscureText: true,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: InputBorder.none,
+                      labelText: 'Grok (xAI) API key',
+                      labelStyle: TextStyle(color: Colors.white38),
+                    ),
+                    onChanged: (v) {
+                      if (v.trim().isEmpty) {
+                        widget.storage.delete(key: kGrokKeyStorageKey);
+                      } else {
+                        widget.storage
+                            .write(key: kGrokKeyStorageKey, value: v.trim());
+                      }
+                    },
+                  ),
+                  TextField(
+                    controller: _claudeKeyController,
+                    obscureText: true,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: InputBorder.none,
+                      labelText: 'Claude (Anthropic) API key',
+                      labelStyle: TextStyle(color: Colors.white38),
+                    ),
+                    onChanged: (v) {
+                      if (v.trim().isEmpty) {
+                        widget.storage.delete(key: kClaudeKeyStorageKey);
+                      } else {
+                        widget.storage
+                            .write(key: kClaudeKeyStorageKey, value: v.trim());
+                      }
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+
           _section('Integrations'),
           Padding(
             padding: const EdgeInsets.only(bottom: 6),
